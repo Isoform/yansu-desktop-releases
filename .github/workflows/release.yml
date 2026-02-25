@@ -1,0 +1,358 @@
+name: Release Yansu Desktop
+
+on:
+  repository_dispatch:
+    types: [release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. v0.13.0)'
+        required: true
+        default: 'v0.13.0'
+
+env:
+  APP_NAME: Yansu
+  SOURCE_REPO: Isoform/something
+  SOURCE_PATH: wails-gui
+  SOURCE_REF: zerone0x/yansu-acp-wrapper-v1  # TODO: update to main after PR #762 merges
+
+jobs:
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [arm64, amd64]
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.SOURCE_REF }}
+          path: source
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: source/${{ env.SOURCE_PATH }}/go.sum
+
+      - name: Setup Node + pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install tools
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          brew install create-dmg
+
+      - name: Install frontend deps
+        working-directory: source/${{ env.SOURCE_PATH }}/frontend
+        run: pnpm install
+
+      - name: Generate app icon
+        working-directory: source/${{ env.SOURCE_PATH }}
+        run: |
+          mkdir -p build
+          sips -z 512 512 \
+            frontend/src/assets/yansu-logo-color.png \
+            --out build/appicon.png
+          echo "appicon.png: $(sips -g pixelWidth -g pixelHeight build/appicon.png | grep pixel)"
+
+      - name: Build ACP bundle
+        env:
+          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          ROOT="$(pwd)"
+          BUNDLE="$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle"
+          git clone --depth 1 \
+            "https://x-access-token:${ACP_TOKEN}@github.com/Isoform/claude-code-acp.git" \
+            acp-src
+          cd acp-src
+          npm ci --prefer-offline 2>&1 | tail -3
+          cat > tsconfig.build.json << 'TSCONFIG'
+          {"extends":"./tsconfig.json","exclude":["src/tests/**","**/*.test.ts","**/*.spec.ts"]}
+          TSCONFIG
+          npx tsc -p tsconfig.build.json 2>&1 | tail -5
+          npm prune --omit=dev 2>&1 | tail -2
+          mkdir -p "$BUNDLE"
+          cp -r dist node_modules package.json "$BUNDLE/"
+          echo "ACP bundle: $(du -sh $BUNDLE | cut -f1)"
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION=${{ github.event.client_payload.version || inputs.version }}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Build Wails app
+        working-directory: source/${{ env.SOURCE_PATH }}
+        run: |
+          wails build \
+            -platform darwin/${{ matrix.arch }} \
+            -ldflags "-X main.Version=${{ steps.version.outputs.VERSION_NUM }}"
+
+      - name: Embed ACP bundle into .app
+        run: |
+          ROOT="$(pwd)"
+          RESOURCES="$ROOT/source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}.app/Contents/Resources"
+          mkdir -p "$RESOURCES"
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle" "$RESOURCES/acp-bundle"
+          echo "Embedded: $(du -sh $RESOURCES/acp-bundle | cut -f1)"
+
+      - name: Ad-hoc sign app
+        working-directory: source/${{ env.SOURCE_PATH }}/build/bin
+        run: |
+          codesign --deep --force --sign - "${{ env.APP_NAME }}.app"
+          echo "Signed: $(codesign -dv ${{ env.APP_NAME }}.app 2>&1 | grep Authority || echo 'ad-hoc')"
+
+      - name: Package — .dmg (initial install)
+        working-directory: source/${{ env.SOURCE_PATH }}/build/bin
+        run: |
+          DMG="${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg"
+          create-dmg \
+            --volname "${{ env.APP_NAME }}" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "${{ env.APP_NAME }}.app" 175 190 \
+            --hide-extension "${{ env.APP_NAME }}.app" \
+            --app-drop-link 425 190 \
+            "$DMG" \
+            "${{ env.APP_NAME }}.app"
+          echo "DMG: $(du -sh $DMG | cut -f1)"
+
+      - name: Package — .gz (auto-update)
+        working-directory: source/${{ env.SOURCE_PATH }}/build/bin
+        run: |
+          BINARY="${{ env.APP_NAME }}.app/Contents/MacOS/${{ env.APP_NAME }}"
+          GZ="${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.gz"
+          gzip -c "$BINARY" > "$GZ"
+          echo "GZ: $(du -sh $GZ | cut -f1)"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-darwin-${{ matrix.arch }}
+          path: |
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.gz
+
+  build-linux:
+    name: Build Linux (amd64)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.SOURCE_REF }}
+          path: source
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            gcc \
+            pkg-config
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: source/${{ env.SOURCE_PATH }}/go.sum
+
+      - name: Setup Node + pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend deps
+        working-directory: source/${{ env.SOURCE_PATH }}/frontend
+        run: pnpm install
+
+      - name: Build ACP bundle
+        env:
+          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          ROOT="$(pwd)"
+          BUNDLE="$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle"
+          git clone --depth 1 \
+            "https://x-access-token:${ACP_TOKEN}@github.com/Isoform/claude-code-acp.git" \
+            acp-src
+          cd acp-src
+          npm ci --prefer-offline 2>&1 | tail -3
+          cat > tsconfig.build.json << 'TSCONFIG'
+          {"extends":"./tsconfig.json","exclude":["src/tests/**","**/*.test.ts","**/*.spec.ts"]}
+          TSCONFIG
+          npx tsc -p tsconfig.build.json 2>&1 | tail -5
+          npm prune --omit=dev 2>&1 | tail -2
+          mkdir -p "$BUNDLE"
+          cp -r dist node_modules package.json "$BUNDLE/"
+          echo "ACP bundle: $(du -sh $BUNDLE | cut -f1)"
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION=${{ github.event.client_payload.version || inputs.version }}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Build Wails app
+        working-directory: source/${{ env.SOURCE_PATH }}
+        run: |
+          wails build \
+            -platform linux/amd64 \
+            -ldflags "-X main.Version=${{ steps.version.outputs.VERSION_NUM }}"
+
+      - name: Embed ACP bundle next to binary
+        run: |
+          ROOT="$(pwd)"
+          BIN_DIR="$ROOT/source/${{ env.SOURCE_PATH }}/build/bin"
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle" "$BIN_DIR/acp-bundle"
+          echo "Embedded: $(du -sh $BIN_DIR/acp-bundle | cut -f1)"
+
+      - name: Package — .gz
+        working-directory: source/${{ env.SOURCE_PATH }}/build/bin
+        run: |
+          GZ="${{ env.APP_NAME }}-linux-amd64.gz"
+          gzip -c "${{ env.APP_NAME }}" > "$GZ"
+          echo "GZ: $(du -sh $GZ | cut -f1)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-linux-amd64
+          path: source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.gz
+
+  build-windows:
+    name: Build Windows (amd64)
+    if: false  # TODO: Windows needs PTY/terminal adaptation before enabling
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.SOURCE_REF }}
+          path: source
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: source/${{ env.SOURCE_PATH }}/go.sum
+
+      - name: Setup Node + pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend deps
+        working-directory: source/${{ env.SOURCE_PATH }}/frontend
+        run: pnpm install
+
+      - name: Generate app icon (.ico)
+        working-directory: source/${{ env.SOURCE_PATH }}
+        shell: bash
+        run: |
+          mkdir -p build/windows
+          magick frontend/src/assets/yansu-logo-color.png \
+            -define icon:auto-resize=256,128,64,48,32,16 \
+            build/windows/icon.ico
+          echo "icon.ico saved"
+
+      - name: Set version
+        id: version
+        shell: bash
+        run: |
+          VERSION=${{ github.event.client_payload.version || inputs.version }}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Build Wails app
+        working-directory: source/${{ env.SOURCE_PATH }}
+        run: |
+          wails build -platform windows/amd64 -ldflags "-X main.Version=${{ steps.version.outputs.VERSION_NUM }}"
+
+      - name: Package — .gz (auto-update) + rename .exe (initial install)
+        working-directory: source/${{ env.SOURCE_PATH }}/build/bin
+        shell: bash
+        run: |
+          GZ="${{ env.APP_NAME }}-windows-amd64.gz"
+          EXE="${{ env.APP_NAME }}-windows-amd64.exe"
+          gzip -c "${{ env.APP_NAME }}.exe" > "$GZ"
+          cp "${{ env.APP_NAME }}.exe" "$EXE"
+          echo "GZ: $(du -sh $GZ | cut -f1) | EXE: $(du -sh $EXE | cut -f1)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-windows-amd64
+          path: |
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.exe
+
+  release:
+    name: Create Release
+    needs: [build-macos, build-linux]  # build-windows disabled until PTY adapted
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Set version
+        id: version
+        run: |
+          VERSION=${{ github.event.client_payload.version || inputs.version }}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.gz" -o -name "*.dmg" -o -name "*.exe" \) -exec cp {} release/ \;
+          cd release && sha256sum * > checksums.txt
+          echo "=== Release assets ===" && ls -lh
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Yansu Desktop ${{ steps.version.outputs.VERSION }}
+          body: |
+            Yansu Desktop ${{ steps.version.outputs.VERSION }}
+
+            Bug fixes and improvements.
+          files: release/*
+          draft: false
+          prerelease: false
