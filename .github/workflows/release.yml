@@ -14,7 +14,7 @@ env:
   APP_NAME: Yansu
   SOURCE_REPO: Isoform/something
   SOURCE_PATH: wails-gui
-  SOURCE_REF: zerone0x/yansu-acp-wrapper-v1  # TODO: update to main after PR #762 merges
+  SOURCE_REF: main
 
 jobs:
   build-macos:
