@@ -65,6 +65,26 @@ jobs:
             --out build/appicon.png
           echo "appicon.png: $(sips -g pixelWidth -g pixelHeight build/appicon.png | grep pixel)"
 
+      - name: Build ACP bundle
+        env:
+          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          ROOT="$(pwd)"
+          BUNDLE="$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle"
+          git clone --depth 1 \
+            "https://x-access-token:${ACP_TOKEN}@github.com/Isoform/claude-code-acp.git" \
+            acp-src
+          cd acp-src
+          npm ci --prefer-offline 2>&1 | tail -3
+          cat > tsconfig.build.json << 'TSCONFIG'
+          {"extends":"./tsconfig.json","exclude":["src/tests/**","**/*.test.ts","**/*.spec.ts"]}
+          TSCONFIG
+          npx tsc -p tsconfig.build.json 2>&1 | tail -5
+          npm prune --omit=dev 2>&1 | tail -2
+          mkdir -p "$BUNDLE"
+          cp -r dist node_modules package.json "$BUNDLE/"
+          echo "ACP bundle: $(du -sh $BUNDLE | cut -f1)"
+
       - name: Set version
         id: version
         run: |
@@ -78,6 +98,14 @@ jobs:
           wails build \
             -platform darwin/${{ matrix.arch }} \
             -ldflags "-X main.Version=${{ steps.version.outputs.VERSION_NUM }}"
+
+      - name: Embed ACP bundle into .app
+        run: |
+          ROOT="$(pwd)"
+          RESOURCES="$ROOT/source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}.app/Contents/Resources"
+          mkdir -p "$RESOURCES"
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle" "$RESOURCES/acp-bundle"
+          echo "Embedded: $(du -sh $RESOURCES/acp-bundle | cut -f1)"
 
       - name: Ad-hoc sign app
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -160,6 +188,26 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
+      - name: Build ACP bundle
+        env:
+          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          ROOT="$(pwd)"
+          BUNDLE="$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle"
+          git clone --depth 1 \
+            "https://x-access-token:${ACP_TOKEN}@github.com/Isoform/claude-code-acp.git" \
+            acp-src
+          cd acp-src
+          npm ci --prefer-offline 2>&1 | tail -3
+          cat > tsconfig.build.json << 'TSCONFIG'
+          {"extends":"./tsconfig.json","exclude":["src/tests/**","**/*.test.ts","**/*.spec.ts"]}
+          TSCONFIG
+          npx tsc -p tsconfig.build.json 2>&1 | tail -5
+          npm prune --omit=dev 2>&1 | tail -2
+          mkdir -p "$BUNDLE"
+          cp -r dist node_modules package.json "$BUNDLE/"
+          echo "ACP bundle: $(du -sh $BUNDLE | cut -f1)"
+
       - name: Set version
         id: version
         run: |
@@ -173,6 +221,13 @@ jobs:
           wails build \
             -platform linux/amd64 \
             -ldflags "-X main.Version=${{ steps.version.outputs.VERSION_NUM }}"
+
+      - name: Embed ACP bundle next to binary
+        run: |
+          ROOT="$(pwd)"
+          BIN_DIR="$ROOT/source/${{ env.SOURCE_PATH }}/build/bin"
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle" "$BIN_DIR/acp-bundle"
+          echo "Embedded: $(du -sh $BIN_DIR/acp-bundle | cut -f1)"
 
       - name: Package — .gz
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
