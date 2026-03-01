@@ -9,6 +9,10 @@ on:
         description: 'Version to release (e.g. v0.1.1)'
         required: true
         default: 'v0.1.1'
+      release_notes:
+        description: 'Release notes (markdown supported)'
+        required: false
+        default: 'Bug fixes and improvements.'
 
 env:
   APP_NAME: Yansu
@@ -281,6 +285,18 @@ jobs:
             gh release delete "$VERSION" --repo "$REPO" --yes --cleanup-tag
           fi
 
+      - name: Set release notes
+        id: notes
+        run: |
+          NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}"
+          {
+            echo "BODY<<EOF"
+            echo "Yansu Desktop ${{ steps.version.outputs.VERSION }}"
+            echo ""
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -290,7 +306,5 @@ jobs:
           gh release create "$VERSION" \
             --repo "$REPO" \
             --title "Yansu Desktop $VERSION" \
-            --notes "Yansu Desktop $VERSION
-
-          Bug fixes and improvements." \
+            --notes "${{ steps.notes.outputs.BODY }}" \
             release/*
