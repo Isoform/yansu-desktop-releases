@@ -9,10 +9,6 @@ on:
         description: 'Version to release (e.g. v0.1.1)'
         required: true
         default: 'v0.1.1'
-      release_notes:
-        description: 'Release notes (markdown supported)'
-        required: false
-        default: 'Bug fixes and improvements.'
 
 env:
   APP_NAME: Yansu
@@ -60,6 +56,52 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
+      - name: Generate app icon
+        working-directory: source/${{ env.SOURCE_PATH }}
+        run: |
+          mkdir -p build
+          sips -z 512 512 \
+            frontend/src/assets/yansu-logo-color.png \
+            --out build/appicon.png
+          echo "appicon.png: $(sips -g pixelWidth -g pixelHeight build/appicon.png | grep pixel)"
+
+      - name: Build ACP bundle
+        env:
+          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          ROOT="$(pwd)"
+          BUNDLE="$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle"
+          git clone --depth 1 \
+            "https://x-access-token:${ACP_TOKEN}@github.com/Isoform/claude-code-acp.git" \
+            acp-src
+          cd acp-src
+          npm ci --prefer-offline 2>&1 | tail -3
+          cat > tsconfig.build.json << 'TSCONFIG'
+          {"extends":"./tsconfig.json","exclude":["src/tests/**","**/*.test.ts","**/*.spec.ts"]}
+          TSCONFIG
+          npx tsc -p tsconfig.build.json 2>&1 | tail -5
+          npm prune --omit=dev 2>&1 | tail -2
+          mkdir -p "$BUNDLE"
+          cp -r dist node_modules package.json "$BUNDLE/"
+          echo "ACP bundle: $(du -sh $BUNDLE | cut -f1)"
+
+      - name: Build yansu CLI bundle
+        working-directory: source/yansu-agent
+        run: |
+          ROOT="$(pwd)/.."
+          OUTPUT_DIR="$ROOT/${{ env.SOURCE_PATH }}/yansu-cli-bundle/bin"
+          mkdir -p "$OUTPUT_DIR"
+          GOARCH=${{ matrix.arch }} go build -o "$OUTPUT_DIR/yansu" ./cmd/yansu
+          chmod +x "$OUTPUT_DIR/yansu"
+          echo "Yansu CLI: $(du -sh $ROOT/${{ env.SOURCE_PATH }}/yansu-cli-bundle | cut -f1)"
+
+      - name: Download bun runtime
+        run: |
+          ROOT="$(pwd)"
+          BUN_BUNDLE="$ROOT/source/${{ env.SOURCE_PATH }}/bun-bundle"
+          bash "$ROOT/source/${{ env.SOURCE_PATH }}/scripts/download-bun.sh"
+          echo "Bun bundle: $(du -sh $BUN_BUNDLE | cut -f1)"
+
       - name: Set version
         id: version
         run: |
@@ -67,21 +109,54 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
           echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_OUTPUT
 
-      - name: Build, embed & package
+      - name: Build Wails app
         working-directory: source/${{ env.SOURCE_PATH }}
-        env:
-          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         run: |
-          bash scripts/build-wails.sh \
-            --platform darwin/${{ matrix.arch }} \
-            --version ${{ steps.version.outputs.VERSION_NUM }} \
-            --dmg
+          wails build \
+            -platform darwin/${{ matrix.arch }} \
+            -ldflags "-X main.Version=${{ steps.version.outputs.VERSION_NUM }}"
 
-      - name: Rename DMG with arch suffix
+      - name: Embed bundles into .app
+        run: |
+          ROOT="$(pwd)"
+          RESOURCES="$ROOT/source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}.app/Contents/Resources"
+          mkdir -p "$RESOURCES"
+
+          # ACP bundle
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle" "$RESOURCES/acp-bundle"
+          echo "Embedded ACP: $(du -sh $RESOURCES/acp-bundle | cut -f1)"
+
+          # Yansu CLI bundle
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/yansu-cli-bundle" "$RESOURCES/yansu-cli-bundle"
+          echo "Embedded yansu CLI: $(du -sh $RESOURCES/yansu-cli-bundle | cut -f1)"
+
+          # Bun runtime bundle
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/bun-bundle" "$RESOURCES/bun-bundle"
+          echo "Embedded bun: $(du -sh $RESOURCES/bun-bundle | cut -f1)"
+
+          echo "Total app size: $(du -sh $ROOT/source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}.app | cut -f1)"
+
+      - name: Ad-hoc sign app
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         run: |
-          mv "${{ env.APP_NAME }}.dmg" "${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg"
-          echo "DMG: $(du -sh ${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg | cut -f1)"
+          codesign --deep --force --sign - "${{ env.APP_NAME }}.app"
+          echo "Signed: $(codesign -dv ${{ env.APP_NAME }}.app 2>&1 | grep Authority || echo 'ad-hoc')"
+
+      - name: Package — .dmg (initial install)
+        working-directory: source/${{ env.SOURCE_PATH }}/build/bin
+        run: |
+          DMG="${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg"
+          create-dmg \
+            --volname "${{ env.APP_NAME }}" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "${{ env.APP_NAME }}.app" 175 190 \
+            --hide-extension "${{ env.APP_NAME }}.app" \
+            --app-drop-link 425 190 \
+            "$DMG" \
+            "${{ env.APP_NAME }}.app"
+          echo "DMG: $(du -sh $DMG | cut -f1)"
 
       - name: Package — .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -119,8 +194,7 @@ jobs:
             libgtk-3-dev \
             libwebkit2gtk-4.0-dev \
             gcc \
-            pkg-config \
-            imagemagick
+            pkg-config
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -143,6 +217,43 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
+      - name: Build ACP bundle
+        env:
+          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          ROOT="$(pwd)"
+          BUNDLE="$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle"
+          git clone --depth 1 \
+            "https://x-access-token:${ACP_TOKEN}@github.com/Isoform/claude-code-acp.git" \
+            acp-src
+          cd acp-src
+          npm ci --prefer-offline 2>&1 | tail -3
+          cat > tsconfig.build.json << 'TSCONFIG'
+          {"extends":"./tsconfig.json","exclude":["src/tests/**","**/*.test.ts","**/*.spec.ts"]}
+          TSCONFIG
+          npx tsc -p tsconfig.build.json 2>&1 | tail -5
+          npm prune --omit=dev 2>&1 | tail -2
+          mkdir -p "$BUNDLE"
+          cp -r dist node_modules package.json "$BUNDLE/"
+          echo "ACP bundle: $(du -sh $BUNDLE | cut -f1)"
+
+      - name: Build yansu CLI bundle
+        working-directory: source/yansu-agent
+        run: |
+          ROOT="$(pwd)/.."
+          OUTPUT_DIR="$ROOT/${{ env.SOURCE_PATH }}/yansu-cli-bundle/bin"
+          mkdir -p "$OUTPUT_DIR"
+          go build -o "$OUTPUT_DIR/yansu" ./cmd/yansu
+          chmod +x "$OUTPUT_DIR/yansu"
+          echo "Yansu CLI: $(du -sh $ROOT/${{ env.SOURCE_PATH }}/yansu-cli-bundle | cut -f1)"
+
+      - name: Download bun runtime
+        run: |
+          ROOT="$(pwd)"
+          bash "$ROOT/source/${{ env.SOURCE_PATH }}/scripts/download-bun.sh"
+          BUN_BUNDLE="$ROOT/source/${{ env.SOURCE_PATH }}/bun-bundle"
+          echo "Bun bundle: $(du -sh $BUN_BUNDLE | cut -f1)"
+
       - name: Set version
         id: version
         run: |
@@ -150,14 +261,23 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
           echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_OUTPUT
 
-      - name: Build, embed & package
+      - name: Build Wails app
         working-directory: source/${{ env.SOURCE_PATH }}
-        env:
-          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         run: |
-          bash scripts/build-wails.sh \
-            --platform linux/amd64 \
-            --version ${{ steps.version.outputs.VERSION_NUM }}
+          wails build \
+            -platform linux/amd64 \
+            -ldflags "-X main.Version=${{ steps.version.outputs.VERSION_NUM }}"
+
+      - name: Embed bundles next to binary
+        run: |
+          ROOT="$(pwd)"
+          BIN_DIR="$ROOT/source/${{ env.SOURCE_PATH }}/build/bin"
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/acp-bundle" "$BIN_DIR/acp-bundle"
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/yansu-cli-bundle" "$BIN_DIR/yansu-cli-bundle"
+          cp -r "$ROOT/source/${{ env.SOURCE_PATH }}/bun-bundle" "$BIN_DIR/bun-bundle"
+          echo "Embedded ACP: $(du -sh $BIN_DIR/acp-bundle | cut -f1)"
+          echo "Embedded yansu CLI: $(du -sh $BIN_DIR/yansu-cli-bundle | cut -f1)"
+          echo "Embedded bun: $(du -sh $BIN_DIR/bun-bundle | cut -f1)"
 
       - name: Package — .gz
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -285,18 +405,6 @@ jobs:
             gh release delete "$VERSION" --repo "$REPO" --yes --cleanup-tag
           fi
 
-      - name: Set release notes
-        id: notes
-        run: |
-          NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}"
-          {
-            echo "BODY<<EOF"
-            echo "Yansu Desktop ${{ steps.version.outputs.VERSION }}"
-            echo ""
-            echo "$NOTES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -306,5 +414,7 @@ jobs:
           gh release create "$VERSION" \
             --repo "$REPO" \
             --title "Yansu Desktop $VERSION" \
-            --notes "${{ steps.notes.outputs.BODY }}" \
+            --notes "Yansu Desktop $VERSION
+
+          Bug fixes and improvements." \
             release/*
