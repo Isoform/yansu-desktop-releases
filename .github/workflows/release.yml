@@ -6,9 +6,18 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. v0.1.1)'
-        required: true
-        default: 'v0.1.1'
+        description: 'Version to release (e.g. v0.1.1). Leave empty to auto-increment.'
+        required: false
+        default: ''
+      bump_type:
+        description: 'Version bump type (used when version is empty)'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       release_notes:
         description: 'Release notes (markdown supported)'
         required: false
@@ -21,8 +30,59 @@ env:
   SOURCE_REF: main
 
 jobs:
+  resolve-version:
+    name: Resolve Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.resolve.outputs.VERSION }}
+      version_num: ${{ steps.resolve.outputs.VERSION_NUM }}
+    steps:
+      - name: Resolve version
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Use explicitly provided version if available
+          EXPLICIT="${{ github.event.client_payload.version || inputs.version }}"
+          if [ -n "$EXPLICIT" ]; then
+            echo "Using explicit version: $EXPLICIT"
+            echo "VERSION=${EXPLICIT}" >> "$GITHUB_OUTPUT"
+            echo "VERSION_NUM=${EXPLICIT#v}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Auto-increment: get latest release tag
+          LATEST=$(gh release list --repo "${{ github.repository }}" --limit 1 --exclude-drafts --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+            echo "No existing releases found, starting from $LATEST"
+          else
+            echo "Latest release: $LATEST"
+          fi
+
+          # Parse semver
+          SEMVER="${LATEST#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
+          MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
+
+          # Bump based on type
+          BUMP="${{ inputs.bump_type || 'patch' }}"
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch|*) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Auto-incremented version: $VERSION (bump=$BUMP)"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "VERSION_NUM=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
+
   build-macos:
     name: Build macOS (${{ matrix.arch }})
+    needs: [resolve-version]
     runs-on: macos-latest
     strategy:
       matrix:
@@ -60,13 +120,6 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
-      - name: Set version
-        id: version
-        run: |
-          VERSION=${{ github.event.client_payload.version || inputs.version }}
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_OUTPUT
-
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
         env:
@@ -74,7 +127,7 @@ jobs:
         run: |
           bash scripts/build-wails.sh \
             --platform darwin/${{ matrix.arch }} \
-            --version ${{ steps.version.outputs.VERSION_NUM }} \
+            --version ${{ needs.resolve-version.outputs.version_num }} \
             --dmg
 
       - name: Rename DMG with arch suffix
@@ -101,6 +154,7 @@ jobs:
 
   build-linux:
     name: Build Linux (amd64)
+    needs: [resolve-version]
     runs-on: ubuntu-22.04
 
     steps:
@@ -143,13 +197,6 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
-      - name: Set version
-        id: version
-        run: |
-          VERSION=${{ github.event.client_payload.version || inputs.version }}
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_OUTPUT
-
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
         env:
@@ -157,7 +204,7 @@ jobs:
         run: |
           bash scripts/build-wails.sh \
             --platform linux/amd64 \
-            --version ${{ steps.version.outputs.VERSION_NUM }}
+            --version ${{ needs.resolve-version.outputs.version_num }}
 
       - name: Package — .gz
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -174,6 +221,7 @@ jobs:
 
   build-windows:
     name: Build Windows (amd64)
+    needs: [resolve-version]
     if: false  # TODO: Windows needs PTY/terminal adaptation before enabling
     runs-on: windows-latest
 
@@ -217,18 +265,10 @@ jobs:
             build/windows/icon.ico
           echo "icon.ico saved"
 
-      - name: Set version
-        id: version
-        shell: bash
-        run: |
-          VERSION=${{ github.event.client_payload.version || inputs.version }}
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_OUTPUT
-
       - name: Build Wails app
         working-directory: source/${{ env.SOURCE_PATH }}
         run: |
-          wails build -platform windows/amd64 -ldflags "-X main.Version=${{ steps.version.outputs.VERSION_NUM }}"
+          wails build -platform windows/amd64 -ldflags "-X main.Version=${{ needs.resolve-version.outputs.version_num }}"
 
       - name: Package — .gz (auto-update) + rename .exe (initial install)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -250,18 +290,12 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-macos, build-linux]  # build-windows disabled until PTY adapted
+    needs: [resolve-version, build-macos, build-linux]  # build-windows disabled until PTY adapted
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Set version
-        id: version
-        run: |
-          VERSION=${{ github.event.client_payload.version || inputs.version }}
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -278,7 +312,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
+          VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
           if gh release view "$VERSION" --repo "$REPO" &>/dev/null; then
             echo "Deleting existing release $VERSION..."
@@ -291,7 +325,7 @@ jobs:
           NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}"
           {
             echo "BODY<<EOF"
-            echo "Yansu Desktop ${{ steps.version.outputs.VERSION }}"
+            echo "Yansu Desktop ${{ needs.resolve-version.outputs.version }}"
             echo ""
             echo "$NOTES"
             echo "EOF"
@@ -301,7 +335,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
+          VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
           gh release create "$VERSION" \
             --repo "$REPO" \
