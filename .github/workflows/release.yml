@@ -222,7 +222,6 @@ jobs:
   build-windows:
     name: Build Windows (amd64)
     needs: [resolve-version]
-    if: false  # TODO: Windows needs PTY/terminal adaptation before enabling
     runs-on: windows-latest
 
     steps:
@@ -265,10 +264,15 @@ jobs:
             build/windows/icon.ico
           echo "icon.ico saved"
 
-      - name: Build Wails app
+      - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
+        shell: bash
+        env:
+          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         run: |
-          wails build -platform windows/amd64 -ldflags "-X main.Version=${{ needs.resolve-version.outputs.version_num }}"
+          bash scripts/build-wails.sh \
+            --platform windows/amd64 \
+            --version ${{ needs.resolve-version.outputs.version_num }}
 
       - name: Package — .gz (auto-update) + rename .exe (initial install)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -290,7 +294,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [resolve-version, build-macos, build-linux]  # build-windows disabled until PTY adapted
+    needs: [resolve-version, build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
