@@ -274,23 +274,25 @@ jobs:
             --platform windows/amd64 \
             --version ${{ needs.resolve-version.outputs.version_num }}
 
-      - name: Package — .gz (auto-update) + rename .exe (initial install)
+      - name: Package — .zip (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         shell: bash
         run: |
+          ZIP="${{ env.APP_NAME }}-windows-amd64.zip"
           GZ="${{ env.APP_NAME }}-windows-amd64.gz"
-          EXE="${{ env.APP_NAME }}-windows-amd64.exe"
+          # .zip contains exe + all bundled dependencies (acp, bun, codex-acp, yansu-cli)
+          7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
+          # .gz is the bare binary for auto-update
           gzip -c "${{ env.APP_NAME }}.exe" > "$GZ"
-          cp "${{ env.APP_NAME }}.exe" "$EXE"
-          echo "GZ: $(du -sh $GZ | cut -f1) | EXE: $(du -sh $EXE | cut -f1)"
+          echo "ZIP: $(du -sh $ZIP | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-windows-amd64
           path: |
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.zip
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.exe
 
   release:
     name: Create Release
@@ -308,7 +310,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.gz" -o -name "*.dmg" -o -name "*.exe" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.gz" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} release/ \;
           cd release && sha256sum * > checksums.txt
           echo "=== Release assets ===" && ls -lh
 
