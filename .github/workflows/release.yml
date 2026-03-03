@@ -27,7 +27,7 @@ env:
   APP_NAME: Yansu
   SOURCE_REPO: Isoform/something
   SOURCE_PATH: wails-gui
-  SOURCE_REF: zerone0x/solid-lark
+  SOURCE_REF: main
 
 jobs:
   resolve-version:
