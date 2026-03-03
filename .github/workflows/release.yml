@@ -206,18 +206,24 @@ jobs:
             --platform linux/amd64 \
             --version ${{ needs.resolve-version.outputs.version_num }}
 
-      - name: Package — .gz
+      - name: Package — .tar.gz (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         run: |
+          TAR="${{ env.APP_NAME }}-linux-amd64.tar.gz"
           GZ="${{ env.APP_NAME }}-linux-amd64.gz"
+          # .tar.gz contains binary + all bundled dependencies (preserves Unix permissions)
+          tar czf "$TAR" "${{ env.APP_NAME }}" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
+          # .gz is the bare binary for auto-update
           gzip -c "${{ env.APP_NAME }}" > "$GZ"
-          echo "GZ: $(du -sh $GZ | cut -f1)"
+          echo "TAR: $(du -sh $TAR | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-linux-amd64
-          path: source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.gz
+          path: |
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.tar.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.gz
 
   build-windows:
     name: Build Windows (amd64)
