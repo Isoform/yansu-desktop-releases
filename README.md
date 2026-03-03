@@ -1,6 +1,6 @@
 # Yansu Desktop
 
-A native macOS and Linux desktop client for Yansu.
+A native macOS, Linux, and Windows desktop client for Yansu.
 
 ## Download
 
@@ -11,8 +11,7 @@ Go to [**Releases**](https://github.com/Isoform/yansu-desktop-releases/releases/
 | macOS (Apple Silicon) | `Yansu-darwin-arm64.dmg` |
 | macOS (Intel) | `Yansu-darwin-amd64.dmg` |
 | Linux (amd64) | `Yansu-linux-amd64.gz` |
-
-> **Windows** support is coming soon.
+| Windows (amd64) | `Yansu-windows-amd64.exe` |
 
 ## Installation
 
@@ -24,6 +23,12 @@ Go to [**Releases**](https://github.com/Isoform/yansu-desktop-releases/releases/
 
 > If macOS blocks the app on first open:  
 > **System Settings → Privacy & Security → Open Anyway**
+
+### Windows
+
+1. Download `Yansu-windows-amd64.exe` from the latest release
+2. Run the `.exe` — no installation required
+3. The app updates itself automatically after first launch
 
 ### Linux
 

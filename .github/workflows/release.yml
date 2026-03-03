@@ -206,23 +206,28 @@ jobs:
             --platform linux/amd64 \
             --version ${{ needs.resolve-version.outputs.version_num }}
 
-      - name: Package — .gz
+      - name: Package — .tar.gz (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         run: |
+          TAR="${{ env.APP_NAME }}-linux-amd64.tar.gz"
           GZ="${{ env.APP_NAME }}-linux-amd64.gz"
+          # .tar.gz contains binary + all bundled dependencies (preserves Unix permissions)
+          tar czf "$TAR" "${{ env.APP_NAME }}" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
+          # .gz is the bare binary for auto-update
           gzip -c "${{ env.APP_NAME }}" > "$GZ"
-          echo "GZ: $(du -sh $GZ | cut -f1)"
+          echo "TAR: $(du -sh $TAR | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-linux-amd64
-          path: source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.gz
+          path: |
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.tar.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.gz
 
   build-windows:
     name: Build Windows (amd64)
     needs: [resolve-version]
-    if: false  # TODO: Windows needs PTY/terminal adaptation before enabling
     runs-on: windows-latest
 
     steps:
@@ -265,32 +270,39 @@ jobs:
             build/windows/icon.ico
           echo "icon.ico saved"
 
-      - name: Build Wails app
+      - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
+        shell: bash
+        env:
+          ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         run: |
-          wails build -platform windows/amd64 -ldflags "-X main.Version=${{ needs.resolve-version.outputs.version_num }}"
+          bash scripts/build-wails.sh \
+            --platform windows/amd64 \
+            --version ${{ needs.resolve-version.outputs.version_num }}
 
-      - name: Package — .gz (auto-update) + rename .exe (initial install)
+      - name: Package — .zip (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         shell: bash
         run: |
+          ZIP="${{ env.APP_NAME }}-windows-amd64.zip"
           GZ="${{ env.APP_NAME }}-windows-amd64.gz"
-          EXE="${{ env.APP_NAME }}-windows-amd64.exe"
+          # .zip contains exe + all bundled dependencies (acp, bun, codex-acp, yansu-cli)
+          7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
+          # .gz is the bare binary for auto-update
           gzip -c "${{ env.APP_NAME }}.exe" > "$GZ"
-          cp "${{ env.APP_NAME }}.exe" "$EXE"
-          echo "GZ: $(du -sh $GZ | cut -f1) | EXE: $(du -sh $EXE | cut -f1)"
+          echo "ZIP: $(du -sh $ZIP | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-windows-amd64
           path: |
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.zip
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.exe
 
   release:
     name: Create Release
-    needs: [resolve-version, build-macos, build-linux]  # build-windows disabled until PTY adapted
+    needs: [resolve-version, build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -304,7 +316,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.gz" -o -name "*.dmg" -o -name "*.exe" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.gz" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} release/ \;
           cd release && sha256sum * > checksums.txt
           echo "=== Release assets ===" && ls -lh
 
