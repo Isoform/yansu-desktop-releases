@@ -124,6 +124,7 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}
         env:
           ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          CODEX_ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         run: |
           bash scripts/build-wails.sh \
             --platform darwin/${{ matrix.arch }} \
@@ -201,6 +202,7 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}
         env:
           ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          CODEX_ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         run: |
           bash scripts/build-wails.sh \
             --platform linux/amd64 \
