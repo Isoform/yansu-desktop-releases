@@ -253,6 +253,9 @@ jobs:
       - name: Install pnpm
         run: npm install -g pnpm
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
@@ -260,21 +263,12 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
-      - name: Generate app icon (.ico)
-        working-directory: source/${{ env.SOURCE_PATH }}
-        shell: bash
-        run: |
-          mkdir -p build/windows
-          magick frontend/src/assets/yansu-logo-color.png \
-            -define icon:auto-resize=256,128,64,48,32,16 \
-            build/windows/icon.ico
-          echo "icon.ico saved"
-
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
-        shell: bash
         env:
           ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          CODEX_ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        shell: bash
         run: |
           bash scripts/build-wails.sh \
             --platform windows/amd64 \
