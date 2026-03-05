@@ -382,3 +382,53 @@ jobs:
             --title "Yansu Desktop $VERSION" \
             --notes "${{ steps.notes.outputs.BODY }}" \
             release/*
+
+  sync-version:
+    name: Sync Version to Source Repo
+    needs: [resolve-version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.SOURCE_REF }}
+
+      - name: Update wails.json version
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version_num }}"
+          WAILS_JSON="${{ env.SOURCE_PATH }}/wails.json"
+          
+          echo "Updating $WAILS_JSON to version $VERSION"
+          
+          # Update productVersion in wails.json
+          sed -i "s/\"productVersion\": *\"[^\"]*\"/\"productVersion\": \"${VERSION}\"/" "$WAILS_JSON"
+          
+          # Verify the change
+          echo "Updated content:"
+          grep productVersion "$WAILS_JSON"
+
+      - name: Commit and push version update
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add "${{ env.SOURCE_PATH }}/wails.json"
+          
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No version changes to commit"
+          else
+            git commit -m "chore: bump Yansu Desktop version to $VERSION
+
+Automated version sync from yansu-desktop-releases
+Release: https://github.com/${{ github.repository }}/releases/tag/$VERSION"
+            git push
+            echo "✅ Version synced to ${{ env.SOURCE_REPO }}"
+          fi
