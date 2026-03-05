@@ -330,6 +330,7 @@ jobs:
   release:
     name: Create Release
     needs: [resolve-version, build-macos, build-linux, build-windows]
+    if: ${{ !cancelled() && needs.build-macos.result == 'success' && needs.build-linux.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
