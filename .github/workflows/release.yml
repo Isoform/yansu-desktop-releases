@@ -166,9 +166,15 @@ jobs:
           mv "${{ env.APP_NAME }}.dmg" "${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg"
           echo "DMG: $(du -sh ${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg | cut -f1)"
 
-      - name: Package — .gz (auto-update)
+      - name: Package — .app.tar.gz (auto-update) + .gz (legacy)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         run: |
+          # .app.tar.gz: full signed+notarized bundle for self-update (preserves codesign)
+          APP_TAR="${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.app.tar.gz"
+          tar -czf "$APP_TAR" "${{ env.APP_NAME }}.app"
+          echo "APP_TAR: $(du -sh $APP_TAR | cut -f1)"
+
+          # .gz: bare binary (legacy, kept for older clients)
           BINARY="${{ env.APP_NAME }}.app/Contents/MacOS/${{ env.APP_NAME }}"
           GZ="${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.gz"
           gzip -c "$BINARY" > "$GZ"
@@ -180,6 +186,7 @@ jobs:
           name: ${{ env.APP_NAME }}-darwin-${{ matrix.arch }}
           path: |
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.app.tar.gz
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.gz
 
   build-linux:
