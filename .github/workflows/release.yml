@@ -389,3 +389,84 @@ jobs:
             --title "Yansu Desktop $VERSION" \
             --notes "${{ steps.notes.outputs.BODY }}" \
             release/*
+
+  upload-to-r2:
+    name: Upload to R2
+    needs: [resolve-version, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare files for R2
+        run: |
+          mkdir -p r2-upload
+          find artifacts -type f \( -name "*.gz" -o -name "*.app.tar.gz" \) -exec cp {} r2-upload/ \;
+          echo "=== Files prepared for R2 ===" && ls -lh r2-upload/
+
+      - name: Generate version.json manifest
+        env:
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          VERSION_NUM="${{ needs.resolve-version.outputs.version_num }}"
+          BASE_URL="${R2_PUBLIC_URL}/releases/${VERSION}"
+          NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}"
+
+          jq -n \
+            --arg ver "$VERSION_NUM" \
+            --arg notes "$NOTES" \
+            --arg da "${BASE_URL}/Yansu-darwin-arm64.app.tar.gz" \
+            --arg di "${BASE_URL}/Yansu-darwin-amd64.app.tar.gz" \
+            --arg la "${BASE_URL}/Yansu-linux-amd64.gz" \
+            --arg wa "${BASE_URL}/Yansu-windows-amd64.gz" \
+            '{
+              version: $ver,
+              release_notes: $notes,
+              assets: {
+                "darwin-arm64": $da,
+                "darwin-amd64": $di,
+                "linux-amd64": $la,
+                "windows-amd64": $wa
+              }
+            }' > r2-upload/version.json
+
+          echo "=== Generated version.json ==="
+          cat r2-upload/version.json
+
+      - name: Upload versioned release to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+
+          aws s3 cp r2-upload/ "s3://${R2_BUCKET}/releases/${VERSION}/" \
+            --recursive \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --region auto \
+            --exclude "version.json"
+
+          echo "Uploaded release ${VERSION} to R2"
+
+      - name: Update latest version.json
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          aws s3 cp r2-upload/version.json "s3://${R2_BUCKET}/version.json" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --region auto \
+            --content-type "application/json"
+
+          echo "Updated root version.json"
