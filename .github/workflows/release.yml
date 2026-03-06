@@ -211,9 +211,7 @@ jobs:
             libwebkit2gtk-4.0-dev \
             gcc \
             pkg-config \
-            imagemagick \
-            libcap-dev \
-            libseccomp-dev
+            imagemagick
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -292,9 +290,6 @@ jobs:
 
       - name: Install pnpm
         run: npm install -g pnpm
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
