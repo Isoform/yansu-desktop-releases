@@ -362,15 +362,15 @@ jobs:
           cd release && sha256sum * > checksums.txt
           echo "=== Release assets ===" && ls -lh
 
-      - name: Clean up stale draft release
+      - name: Clean up existing release (keep tag)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
           if gh release view "$VERSION" --repo "$REPO" &>/dev/null; then
-            echo "Deleting existing release $VERSION..."
-            gh release delete "$VERSION" --repo "$REPO" --yes --cleanup-tag
+            echo "Deleting existing release $VERSION (keeping tag)..."
+            gh release delete "$VERSION" --repo "$REPO" --yes
           fi
 
       - name: Set release notes
@@ -385,6 +385,22 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Ensure tag exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          REPO="${{ github.repository }}"
+          if git ls-remote --tags "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$VERSION" | grep -q "$VERSION"; then
+            echo "Tag $VERSION already exists, will reuse it."
+          else
+            echo "Tag $VERSION does not exist, creating it on HEAD..."
+            gh api "repos/${REPO}/git/refs" \
+              -f ref="refs/tags/${VERSION}" \
+              -f sha="${{ github.sha }}"
+            echo "Tag $VERSION created."
+          fi
+
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -395,6 +411,7 @@ jobs:
             --repo "$REPO" \
             --title "Yansu Desktop $VERSION" \
             --notes "${{ steps.notes.outputs.BODY }}" \
+            --verify-tag \
             release/*
 
   upload-to-r2:
