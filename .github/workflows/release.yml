@@ -1,9 +1,6 @@
 name: Release Yansu Desktop
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   repository_dispatch:
     types: [release]
   workflow_dispatch:
@@ -47,15 +44,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Use tag name if triggered by tag push
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            TAG="${{ github.ref_name }}"
-            echo "Using version from tag: $TAG"
-            echo "VERSION=${TAG}" >> "$GITHUB_OUTPUT"
-            echo "VERSION_NUM=${TAG#v}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           # Use explicitly provided version if available
           EXPLICIT="${{ github.event.client_payload.version || inputs.version }}"
           if [ -n "$EXPLICIT" ]; then
