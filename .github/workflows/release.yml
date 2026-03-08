@@ -22,12 +22,15 @@ on:
         description: 'Release notes (markdown supported)'
         required: false
         default: 'Bug fixes and improvements.'
+      source_ref:
+        description: 'Source repo ref to build from (commit SHA, branch, or tag). Defaults to main.'
+        required: false
+        default: 'main'
 
 env:
   APP_NAME: Yansu
   SOURCE_REPO: Isoform/something
   SOURCE_PATH: wails-gui
-  SOURCE_REF: main
 
 jobs:
   resolve-version:
@@ -38,7 +41,15 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.VERSION }}
       version_num: ${{ steps.resolve.outputs.VERSION_NUM }}
+      source_ref: ${{ steps.source.outputs.REF }}
     steps:
+      - name: Resolve source ref
+        id: source
+        run: |
+          REF="${{ github.event.client_payload.source_ref || inputs.source_ref || 'main' }}"
+          echo "REF=${REF}" >> "$GITHUB_OUTPUT"
+          echo "Source ref: ${REF}"
+
       - name: Resolve version
         id: resolve
         env:
@@ -94,7 +105,7 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPO }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          ref: ${{ env.SOURCE_REF }}
+          ref: ${{ needs.resolve-version.outputs.source_ref }}
           path: source
 
       - name: Setup Go
@@ -204,7 +215,7 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPO }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          ref: ${{ env.SOURCE_REF }}
+          ref: ${{ needs.resolve-version.outputs.source_ref }}
           path: source
 
       - name: Install Linux dependencies
@@ -282,7 +293,7 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPO }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          ref: ${{ env.SOURCE_REF }}
+          ref: ${{ needs.resolve-version.outputs.source_ref }}
           path: source
 
       - name: Setup Go
