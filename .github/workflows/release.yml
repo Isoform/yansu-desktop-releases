@@ -154,6 +154,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          VITE_PUBLIC_POSTHOG_PROD_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          VITE_PUBLIC_POSTHOG_PROD_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          VITE_PUBLIC_POSTHOG_STAGING_KEY: ${{ secrets.POSTHOG_STAGING_KEY }}
+          VITE_PUBLIC_POSTHOG_STAGING_HOST: ${{ secrets.POSTHOG_STAGING_HOST }}
         run: |
           bash scripts/build-wails.sh \
             --platform darwin/${{ matrix.arch }} \
@@ -239,6 +243,10 @@ jobs:
         env:
           ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
           CODEX_ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          VITE_PUBLIC_POSTHOG_PROD_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          VITE_PUBLIC_POSTHOG_PROD_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          VITE_PUBLIC_POSTHOG_STAGING_KEY: ${{ secrets.POSTHOG_STAGING_KEY }}
+          VITE_PUBLIC_POSTHOG_STAGING_HOST: ${{ secrets.POSTHOG_STAGING_HOST }}
         run: |
           bash scripts/build-wails.sh \
             --platform linux/amd64 \
@@ -303,6 +311,10 @@ jobs:
         env:
           ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
           CODEX_ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          VITE_PUBLIC_POSTHOG_PROD_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          VITE_PUBLIC_POSTHOG_PROD_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          VITE_PUBLIC_POSTHOG_STAGING_KEY: ${{ secrets.POSTHOG_STAGING_KEY }}
+          VITE_PUBLIC_POSTHOG_STAGING_HOST: ${{ secrets.POSTHOG_STAGING_HOST }}
         shell: bash
         run: |
           bash scripts/build-wails.sh \
