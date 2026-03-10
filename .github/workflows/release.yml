@@ -87,6 +87,15 @@ jobs:
           esac
 
           VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+
+          # Guard against tag collision (race condition or stale list).
+          REPO="${{ github.repository }}"
+          while gh release view "$VERSION" --repo "$REPO" &>/dev/null; do
+            echo "Version $VERSION already exists, incrementing patch..."
+            PATCH=$((PATCH + 1))
+            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          done
+
           echo "Auto-incremented version: $VERSION (bump=$BUMP)"
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "VERSION_NUM=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
@@ -379,9 +388,12 @@ jobs:
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
-          if gh release view "$VERSION" --repo "$REPO" &>/dev/null; then
-            echo "Deleting existing release $VERSION..."
+          IS_DRAFT=$(gh release view "$VERSION" --repo "$REPO" --json isDraft -q '.isDraft' 2>/dev/null || echo "")
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "Deleting stale draft release $VERSION..."
             gh release delete "$VERSION" --repo "$REPO" --yes --cleanup-tag
+          elif [ -n "$IS_DRAFT" ]; then
+            echo "Warning: $VERSION is a published release, skipping cleanup"
           fi
 
       - name: Set release notes
