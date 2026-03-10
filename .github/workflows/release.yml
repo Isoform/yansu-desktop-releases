@@ -269,7 +269,7 @@ jobs:
           TAR="${{ env.APP_NAME }}-linux-amd64.tar.gz"
           GZ="${{ env.APP_NAME }}-linux-amd64.gz"
           # .tar.gz contains binary + all bundled dependencies (preserves Unix permissions)
-          tar czf "$TAR" "${{ env.APP_NAME }}" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
+          tar czf "$TAR" "${{ env.APP_NAME }}" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle claude-bundle
           # .gz is the bare binary for auto-update
           gzip -c "${{ env.APP_NAME }}" > "$GZ"
           echo "TAR: $(du -sh $TAR | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
@@ -339,7 +339,7 @@ jobs:
           ZIP="${{ env.APP_NAME }}-windows-amd64.zip"
           GZ="${{ env.APP_NAME }}-windows-amd64.gz"
           # .zip contains exe + all bundled dependencies (acp, bun, codex-acp, yansu-cli)
-          7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
+          7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle claude-bundle
           # .gz is the bare binary for auto-update
           gzip -c "${{ env.APP_NAME }}.exe" > "$GZ"
           echo "ZIP: $(du -sh $ZIP | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
