@@ -38,6 +38,132 @@ env:
   SOURCE_REF: main
 
 jobs:
+  generate-changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      changelog: ${{ steps.changelog.outputs.CHANGELOG }}
+      source_commit: ${{ steps.changelog.outputs.SOURCE_COMMIT }}
+    steps:
+      - name: Checkout source repo (full history)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.SOURCE_REF }}
+          path: source
+          fetch-depth: 0
+
+      - name: Find previous release source commit
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get the body of the latest non-draft release and extract the source commit SHA
+          PREV_SHA=$(gh release list --repo "${{ github.repository }}" --limit 20 --exclude-drafts \
+            --json tagName -q '.[].tagName' 2>/dev/null \
+            | sort -V | tail -1 \
+            | xargs -I{} gh release view {} --repo "${{ github.repository }}" --json body -q '.body' 2>/dev/null \
+            | grep -oP '<!-- source-commit: \K[0-9a-f]+(?= -->)' || true)
+
+          if [ -z "$PREV_SHA" ]; then
+            echo "No previous source commit found, will use last 30 commits as fallback"
+            echo "PREV_SHA=" >> "$GITHUB_OUTPUT"
+          else
+            echo "Previous source commit: $PREV_SHA"
+            echo "PREV_SHA=$PREV_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog from commits
+        id: changelog
+        working-directory: source
+        run: |
+          SOURCE_COMMIT=$(git rev-parse HEAD)
+          echo "SOURCE_COMMIT=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "Current source commit: $SOURCE_COMMIT"
+
+          PREV_SHA="${{ steps.prev.outputs.PREV_SHA }}"
+
+          if [ -z "$PREV_SHA" ]; then
+            # Fallback: use last 30 commits touching wails-gui
+            RAW_LOG=$(git log --oneline -30 -- "${{ env.SOURCE_PATH }}/" 2>/dev/null || true)
+          else
+            # Check if PREV_SHA exists in this repo
+            if git cat-file -e "$PREV_SHA" 2>/dev/null; then
+              RAW_LOG=$(git log --oneline "${PREV_SHA}..HEAD" -- "${{ env.SOURCE_PATH }}/" 2>/dev/null || true)
+            else
+              echo "Warning: previous SHA $PREV_SHA not found in repo, falling back to last 30 commits"
+              RAW_LOG=$(git log --oneline -30 -- "${{ env.SOURCE_PATH }}/" 2>/dev/null || true)
+            fi
+          fi
+
+          if [ -z "$RAW_LOG" ]; then
+            CHANGELOG="Bug fixes and improvements."
+            echo "No commits found for changelog"
+          else
+            # Categorize commits by conventional commit type
+            FEATURES=""
+            FIXES=""
+            REFACTORS=""
+            OTHER=""
+
+            while IFS= read -r line; do
+              # Strip the short SHA prefix
+              MSG="${line#* }"
+              # Remove scope prefix like "feat(wails-gui): " -> keep the description
+              case "$MSG" in
+                feat*)    FEATURES="${FEATURES}- ${MSG}
+" ;;
+                fix*)     FIXES="${FIXES}- ${MSG}
+" ;;
+                refactor*) REFACTORS="${REFACTORS}- ${MSG}
+" ;;
+                docs*|ci*|chore*|style*|test*|build*) ;; # skip non-user-facing
+                *)        OTHER="${OTHER}- ${MSG}
+" ;;
+              esac
+            done <<< "$RAW_LOG"
+
+            CHANGELOG=""
+            if [ -n "$FEATURES" ]; then
+              CHANGELOG="${CHANGELOG}### ✨ Features
+${FEATURES}
+"
+            fi
+            if [ -n "$FIXES" ]; then
+              CHANGELOG="${CHANGELOG}### 🐛 Bug Fixes
+${FIXES}
+"
+            fi
+            if [ -n "$REFACTORS" ]; then
+              CHANGELOG="${CHANGELOG}### ♻️ Refactoring
+${REFACTORS}
+"
+            fi
+            if [ -n "$OTHER" ]; then
+              CHANGELOG="${CHANGELOG}### 📦 Other Changes
+${OTHER}
+"
+            fi
+
+            # Fallback if all commits were filtered out (docs/ci/chore only)
+            if [ -z "$CHANGELOG" ]; then
+              CHANGELOG="Bug fixes and improvements."
+            fi
+          fi
+
+          # Write to output using delimiter to preserve newlines
+          {
+            echo "CHANGELOG<<CHANGELOG_EOF"
+            echo "$CHANGELOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "=== Generated Changelog ==="
+          echo "$CHANGELOG"
+
   resolve-version:
     name: Resolve Version
     runs-on: ubuntu-latest
@@ -444,7 +570,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [resolve-version, build-macos, build-linux, build-windows]
+    needs: [resolve-version, generate-changelog, build-macos, build-linux, build-windows]
     if: ${{ !cancelled() && needs.build-macos.result == 'success' && needs.build-linux.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -477,16 +603,28 @@ jobs:
       - name: Set release notes
         id: notes
         run: |
-          NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}"
+          # Use manually provided notes if given, otherwise use auto-generated changelog
+          MANUAL_NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes }}"
+          if [ -n "$MANUAL_NOTES" ] && [ "$MANUAL_NOTES" != "Bug fixes and improvements." ]; then
+            NOTES="$MANUAL_NOTES"
+          else
+            NOTES="${{ needs.generate-changelog.outputs.changelog }}"
+          fi
+
           ENV_LABEL=""
           if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
             ENV_LABEL=" (Staging)"
           fi
+
+          SOURCE_COMMIT="${{ needs.generate-changelog.outputs.source_commit }}"
+
           {
             echo "BODY<<EOF"
-            echo "Yansu Desktop ${{ needs.resolve-version.outputs.version }}${ENV_LABEL}"
+            echo "## Yansu Desktop ${{ needs.resolve-version.outputs.version }}${ENV_LABEL}"
             echo ""
             echo "$NOTES"
+            echo ""
+            echo "<!-- source-commit: ${SOURCE_COMMIT} -->"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -509,7 +647,7 @@ jobs:
 
   upload-to-r2:
     name: Upload to R2
-    needs: [resolve-version, release]
+    needs: [resolve-version, generate-changelog, release]
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -534,7 +672,12 @@ jobs:
           VERSION="${{ needs.resolve-version.outputs.version }}"
           VERSION_NUM="${{ needs.resolve-version.outputs.version_num }}"
           BASE_URL="${R2_PUBLIC_URL}/releases/${VERSION}"
-          NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}"
+          MANUAL_NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes }}"
+          if [ -n "$MANUAL_NOTES" ] && [ "$MANUAL_NOTES" != "Bug fixes and improvements." ]; then
+            NOTES="$MANUAL_NOTES"
+          else
+            NOTES="${{ needs.generate-changelog.outputs.changelog }}"
+          fi
 
           jq -n \
             --arg ver "$VERSION_NUM" \
