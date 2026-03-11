@@ -18,6 +18,14 @@ on:
           - patch
           - minor
           - major
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
       release_notes:
         description: 'Release notes (markdown supported)'
         required: false
@@ -38,12 +46,22 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.VERSION }}
       version_num: ${{ steps.resolve.outputs.VERSION_NUM }}
+      environment: ${{ steps.resolve.outputs.ENVIRONMENT }}
+      is_staging: ${{ steps.resolve.outputs.IS_STAGING }}
     steps:
       - name: Resolve version
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          ENVIRONMENT="${{ inputs.environment || github.event.client_payload.environment || 'production' }}"
+          echo "ENVIRONMENT=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          if [ "$ENVIRONMENT" = "staging" ]; then
+            echo "IS_STAGING=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "IS_STAGING=false" >> "$GITHUB_OUTPUT"
+          fi
+
           # Use explicitly provided version if available
           EXPLICIT="${{ github.event.client_payload.version || inputs.version }}"
           if [ -n "$EXPLICIT" ]; then
@@ -53,32 +71,57 @@ jobs:
             exit 0
           fi
 
-          # Auto-increment: get latest release tag
-          LATEST=$(gh release list --repo "${{ github.repository }}" --limit 1 --exclude-drafts --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
-          if [ -z "$LATEST" ]; then
-            LATEST="v0.0.0"
-            echo "No existing releases found, starting from $LATEST"
+          if [ "$ENVIRONMENT" = "staging" ]; then
+            # For staging: find latest staging tag and increment the staging sequence number
+            LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName -q '[.[].tagName | select(contains("-staging"))] | sort | last' 2>/dev/null || echo "")
+            if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+              # No staging releases yet — base off the latest production release
+              PROD_LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName,isPrerelease -q '[.[] | select(.isPrerelease == false)] | sort_by(.tagName) | last | .tagName' 2>/dev/null || echo "")
+              PROD_LATEST="${PROD_LATEST:-v0.0.0}"
+              SEMVER="${PROD_LATEST#v}"
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
+              MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
+              VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))-staging.1"
+            else
+              # Parse existing staging tag: v0.1.35-staging.N
+              BASE="${LATEST%%-staging.*}"
+              SEQ="${LATEST##*-staging.}"
+              VERSION="${BASE}-staging.$((SEQ + 1))"
+            fi
+            echo "Auto-incremented staging version: $VERSION"
+            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+            # VERSION_NUM for ldflags: strip v prefix and -staging.N suffix
+            CLEAN="${VERSION#v}"
+            CLEAN="${CLEAN%%-staging.*}"
+            echo "VERSION_NUM=${CLEAN}" >> "$GITHUB_OUTPUT"
           else
-            echo "Latest release: $LATEST"
+            # Production: auto-increment, only consider non-prerelease tags
+            LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName,isPrerelease -q '[.[] | select(.isPrerelease == false)] | sort_by(.tagName) | last | .tagName' 2>/dev/null || echo "")
+            if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+              LATEST="v0.0.0"
+              echo "No existing production releases found, starting from $LATEST"
+            else
+              echo "Latest production release: $LATEST"
+            fi
+
+            # Parse semver
+            SEMVER="${LATEST#v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
+            MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
+
+            # Bump based on type
+            BUMP="${{ inputs.bump_type || 'patch' }}"
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              patch|*) PATCH=$((PATCH + 1)) ;;
+            esac
+
+            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+            echo "Auto-incremented production version: $VERSION (bump=$BUMP)"
+            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "VERSION_NUM=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
           fi
-
-          # Parse semver
-          SEMVER="${LATEST#v}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
-          MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
-
-          # Bump based on type
-          BUMP="${{ inputs.bump_type || 'patch' }}"
-          case "$BUMP" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch|*) PATCH=$((PATCH + 1)) ;;
-          esac
-
-          VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "Auto-incremented version: $VERSION (bump=$BUMP)"
-          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "VERSION_NUM=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
 
   build-macos:
     name: Build macOS (${{ matrix.arch }})
@@ -145,6 +188,15 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
+      - name: Compute environment ldflags
+        id: env-ldflags
+        run: |
+          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
+            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "LDFLAGS=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
         env:
@@ -155,10 +207,15 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          bash scripts/build-wails.sh \
-            --platform darwin/${{ matrix.arch }} \
-            --version ${{ needs.resolve-version.outputs.version_num }} \
+          BUILD_ARGS=(
+            --platform darwin/${{ matrix.arch }}
+            --version ${{ needs.resolve-version.outputs.version_num }}
             --dmg
+          )
+          if [ -n "${{ steps.env-ldflags.outputs.LDFLAGS }}" ]; then
+            BUILD_ARGS+=(--ldflags "${{ steps.env-ldflags.outputs.LDFLAGS }}")
+          fi
+          bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
       - name: Rename DMG with arch suffix
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -236,15 +293,29 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
+      - name: Compute environment ldflags
+        id: env-ldflags
+        run: |
+          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
+            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "LDFLAGS=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
         env:
           ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
           CODEX_ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         run: |
-          bash scripts/build-wails.sh \
-            --platform linux/amd64 \
+          BUILD_ARGS=(
+            --platform linux/amd64
             --version ${{ needs.resolve-version.outputs.version_num }}
+          )
+          if [ -n "${{ steps.env-ldflags.outputs.LDFLAGS }}" ]; then
+            BUILD_ARGS+=(--ldflags "${{ steps.env-ldflags.outputs.LDFLAGS }}")
+          fi
+          bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
       - name: Package — .tar.gz (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -303,6 +374,16 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
+      - name: Compute environment ldflags
+        id: env-ldflags
+        shell: bash
+        run: |
+          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
+            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "LDFLAGS=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
         env:
@@ -310,9 +391,14 @@ jobs:
           CODEX_ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         shell: bash
         run: |
-          bash scripts/build-wails.sh \
-            --platform windows/amd64 \
+          BUILD_ARGS=(
+            --platform windows/amd64
             --version ${{ needs.resolve-version.outputs.version_num }}
+          )
+          if [ -n "${{ steps.env-ldflags.outputs.LDFLAGS }}" ]; then
+            BUILD_ARGS+=(--ldflags "${{ steps.env-ldflags.outputs.LDFLAGS }}")
+          fi
+          bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
       - name: Package — .zip (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -370,9 +456,13 @@ jobs:
         id: notes
         run: |
           NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}"
+          ENV_LABEL=""
+          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
+            ENV_LABEL=" (Staging)"
+          fi
           {
             echo "BODY<<EOF"
-            echo "Yansu Desktop ${{ needs.resolve-version.outputs.version }}"
+            echo "Yansu Desktop ${{ needs.resolve-version.outputs.version }}${ENV_LABEL}"
             echo ""
             echo "$NOTES"
             echo "EOF"
@@ -384,10 +474,15 @@ jobs:
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
+          PRERELEASE_FLAG=""
+          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
           gh release create "$VERSION" \
             --repo "$REPO" \
             --title "Yansu Desktop $VERSION" \
             --notes "${{ steps.notes.outputs.BODY }}" \
+            $PRERELEASE_FLAG \
             release/*
 
   upload-to-r2:
@@ -464,9 +559,16 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          aws s3 cp r2-upload/version.json "s3://${R2_BUCKET}/version.json" \
+          # Staging uploads to /staging/version.json; production uploads to /version.json
+          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
+            R2_MANIFEST_PATH="staging/version.json"
+          else
+            R2_MANIFEST_PATH="version.json"
+          fi
+
+          aws s3 cp r2-upload/version.json "s3://${R2_BUCKET}/${R2_MANIFEST_PATH}" \
             --endpoint-url "${R2_ENDPOINT}" \
             --region auto \
             --content-type "application/json"
 
-          echo "Updated root version.json"
+          echo "Updated ${R2_MANIFEST_PATH}"
