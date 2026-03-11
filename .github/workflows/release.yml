@@ -62,21 +62,42 @@ jobs:
             echo "IS_STAGING=false" >> "$GITHUB_OUTPUT"
           fi
 
+          # Helper: find latest production (non-prerelease) tag via semver sort.
+          find_latest_prod() {
+            gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
+              --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
+              | sort -V | tail -1
+          }
+
+          # Helper: bump a semver tag. Usage: bump_version v0.1.59 patch → v0.1.60
+          bump_version() {
+            local SEMVER="${1#v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
+            MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
+            local BUMP="${2:-patch}"
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              patch|*) PATCH=$((PATCH + 1)) ;;
+            esac
+            echo "v${MAJOR}.${MINOR}.${PATCH}"
+          }
+
           # Use explicitly provided version if available
           EXPLICIT="${{ github.event.client_payload.version || inputs.version }}"
           if [ -n "$EXPLICIT" ]; then
             if [ "$ENVIRONMENT" = "staging" ]; then
-              # Ensure staging versions always carry the -staging suffix.
-              # If the user supplied a plain version like v0.1.10, append -staging.1.
+              # Ensure staging versions always carry a -beta suffix.
+              # If the user supplied a plain version like v0.1.60, append -beta.1.
               case "$EXPLICIT" in
-                *-staging*) ;; # already has suffix
-                *) EXPLICIT="${EXPLICIT}-staging.1" ;;
+                *-beta*) ;; # already has suffix
+                *) EXPLICIT="${EXPLICIT}-beta.1" ;;
               esac
             else
-              # Production must never use a staging tag
+              # Production must never use a pre-release tag
               case "$EXPLICIT" in
-                *-staging*)
-                  echo "::error::Cannot use a staging version tag for a production release: $EXPLICIT"
+                *-beta*)
+                  echo "::error::Cannot use a beta version tag for a production release: $EXPLICIT"
                   exit 1
                   ;;
               esac
@@ -84,66 +105,44 @@ jobs:
             echo "Using explicit version: $EXPLICIT"
             echo "VERSION=${EXPLICIT}" >> "$GITHUB_OUTPUT"
             CLEAN="${EXPLICIT#v}"
-            CLEAN="${CLEAN%%-staging.*}"
+            CLEAN="${CLEAN%%-beta.*}"
             echo "VERSION_NUM=${CLEAN}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          # Find latest production release (always needed as baseline)
+          PROD_LATEST=$(find_latest_prod)
+          PROD_LATEST="${PROD_LATEST:-v0.0.0}"
+          echo "Latest production release: $PROD_LATEST"
+
           if [ "$ENVIRONMENT" = "staging" ]; then
-            # For staging: find latest staging tag and increment the staging sequence number.
-            # Use sort -V for correct semver ordering (not lexicographic).
-            LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName -q '.[].tagName' 2>/dev/null \
-              | grep -- '-staging' | sort -V | tail -1)
-            if [ -z "$LATEST" ]; then
-              # No staging releases yet — base off the latest production release
-              PROD_LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
-                | sort -V | tail -1)
-              PROD_LATEST="${PROD_LATEST:-v0.0.0}"
-              SEMVER="${PROD_LATEST#v}"
-              IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
-              MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
-              VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))-staging.1"
+            # Staging: next prod version + beta sequence.
+            # e.g. prod=v0.1.59 → staging=v0.1.60-beta.1, v0.1.60-beta.2, ...
+            NEXT_BASE=$(bump_version "$PROD_LATEST" "${{ inputs.bump_type || 'patch' }}")
+
+            # Find latest beta for this base version
+            LATEST_BETA=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
+              --json tagName -q '.[].tagName' 2>/dev/null \
+              | grep "^${NEXT_BASE}-beta\." | sort -V | tail -1)
+
+            if [ -z "$LATEST_BETA" ]; then
+              VERSION="${NEXT_BASE}-beta.1"
             else
-              # Parse existing staging tag: v0.1.35-staging.N
-              BASE="${LATEST%%-staging.*}"
-              SEQ="${LATEST##*-staging.}"
-              VERSION="${BASE}-staging.$((SEQ + 1))"
+              SEQ="${LATEST_BETA##*-beta.}"
+              VERSION="${NEXT_BASE}-beta.$((SEQ + 1))"
             fi
-            echo "Auto-incremented staging version: $VERSION"
+
+            echo "Auto-incremented staging version: $VERSION (based on prod $PROD_LATEST)"
             echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-            # VERSION_NUM for ldflags: strip v prefix and -staging.N suffix
             CLEAN="${VERSION#v}"
-            CLEAN="${CLEAN%%-staging.*}"
+            CLEAN="${CLEAN%%-beta.*}"
             echo "VERSION_NUM=${CLEAN}" >> "$GITHUB_OUTPUT"
           else
-            # Production: auto-increment, only consider non-prerelease tags.
-            # Use sort -V for correct semver ordering (not lexicographic).
-            LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
-              | sort -V | tail -1)
-            if [ -z "$LATEST" ]; then
-              LATEST="v0.0.0"
-              echo "No existing production releases found, starting from $LATEST"
-            else
-              echo "Latest production release: $LATEST"
-            fi
-
-            # Parse semver
-            SEMVER="${LATEST#v}"
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
-            MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
-
-            # Bump based on type
-            BUMP="${{ inputs.bump_type || 'patch' }}"
-            case "$BUMP" in
-              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-              patch|*) PATCH=$((PATCH + 1)) ;;
-            esac
-
-            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-            echo "Auto-incremented production version: $VERSION (bump=$BUMP)"
+            # Production: bump from latest prod release
+            VERSION=$(bump_version "$PROD_LATEST" "${{ inputs.bump_type || 'patch' }}")
+            echo "Auto-incremented production version: $VERSION"
             echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "VERSION_NUM=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
+            echo "VERSION_NUM=${VERSION#v}" >> "$GITHUB_OUTPUT"
           fi
 
   build-macos:
