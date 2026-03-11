@@ -216,7 +216,7 @@ jobs:
           if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
             echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
           else
-            echo "LDFLAGS=" >> "$GITHUB_OUTPUT"
+            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build, embed & package
@@ -321,7 +321,7 @@ jobs:
           if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
             echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
           else
-            echo "LDFLAGS=" >> "$GITHUB_OUTPUT"
+            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build, embed & package
@@ -403,7 +403,7 @@ jobs:
           if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
             echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
           else
-            echo "LDFLAGS=" >> "$GITHUB_OUTPUT"
+            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build, embed & package
