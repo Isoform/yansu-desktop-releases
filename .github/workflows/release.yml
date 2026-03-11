@@ -65,18 +65,39 @@ jobs:
           # Use explicitly provided version if available
           EXPLICIT="${{ github.event.client_payload.version || inputs.version }}"
           if [ -n "$EXPLICIT" ]; then
+            if [ "$ENVIRONMENT" = "staging" ]; then
+              # Ensure staging versions always carry the -staging suffix.
+              # If the user supplied a plain version like v0.1.10, append -staging.1.
+              case "$EXPLICIT" in
+                *-staging*) ;; # already has suffix
+                *) EXPLICIT="${EXPLICIT}-staging.1" ;;
+              esac
+            else
+              # Production must never use a staging tag
+              case "$EXPLICIT" in
+                *-staging*)
+                  echo "::error::Cannot use a staging version tag for a production release: $EXPLICIT"
+                  exit 1
+                  ;;
+              esac
+            fi
             echo "Using explicit version: $EXPLICIT"
             echo "VERSION=${EXPLICIT}" >> "$GITHUB_OUTPUT"
-            echo "VERSION_NUM=${EXPLICIT#v}" >> "$GITHUB_OUTPUT"
+            CLEAN="${EXPLICIT#v}"
+            CLEAN="${CLEAN%%-staging.*}"
+            echo "VERSION_NUM=${CLEAN}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if [ "$ENVIRONMENT" = "staging" ]; then
-            # For staging: find latest staging tag and increment the staging sequence number
-            LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName -q '[.[].tagName | select(contains("-staging"))] | sort | last' 2>/dev/null || echo "")
-            if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            # For staging: find latest staging tag and increment the staging sequence number.
+            # Use sort -V for correct semver ordering (not lexicographic).
+            LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName -q '.[].tagName' 2>/dev/null \
+              | grep -- '-staging' | sort -V | tail -1)
+            if [ -z "$LATEST" ]; then
               # No staging releases yet — base off the latest production release
-              PROD_LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName,isPrerelease -q '[.[] | select(.isPrerelease == false)] | sort_by(.tagName) | last | .tagName' 2>/dev/null || echo "")
+              PROD_LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
+                | sort -V | tail -1)
               PROD_LATEST="${PROD_LATEST:-v0.0.0}"
               SEMVER="${PROD_LATEST#v}"
               IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
@@ -95,9 +116,11 @@ jobs:
             CLEAN="${CLEAN%%-staging.*}"
             echo "VERSION_NUM=${CLEAN}" >> "$GITHUB_OUTPUT"
           else
-            # Production: auto-increment, only consider non-prerelease tags
-            LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName,isPrerelease -q '[.[] | select(.isPrerelease == false)] | sort_by(.tagName) | last | .tagName' 2>/dev/null || echo "")
-            if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            # Production: auto-increment, only consider non-prerelease tags.
+            # Use sort -V for correct semver ordering (not lexicographic).
+            LATEST=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
+              | sort -V | tail -1)
+            if [ -z "$LATEST" ]; then
               LATEST="v0.0.0"
               echo "No existing production releases found, starting from $LATEST"
             else
