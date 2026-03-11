@@ -109,43 +109,31 @@ jobs:
             REFACTORS=""
             OTHER=""
 
+            NL=$'\n'
             while IFS= read -r line; do
               # Strip the short SHA prefix
               MSG="${line#* }"
-              # Remove scope prefix like "feat(wails-gui): " -> keep the description
               case "$MSG" in
-                feat*)    FEATURES="${FEATURES}- ${MSG}
-" ;;
-                fix*)     FIXES="${FIXES}- ${MSG}
-" ;;
-                refactor*) REFACTORS="${REFACTORS}- ${MSG}
-" ;;
+                feat*)     FEATURES="${FEATURES}- ${MSG}${NL}" ;;
+                fix*)      FIXES="${FIXES}- ${MSG}${NL}" ;;
+                refactor*) REFACTORS="${REFACTORS}- ${MSG}${NL}" ;;
                 docs*|ci*|chore*|style*|test*|build*) ;; # skip non-user-facing
-                *)        OTHER="${OTHER}- ${MSG}
-" ;;
+                *)         OTHER="${OTHER}- ${MSG}${NL}" ;;
               esac
             done <<< "$RAW_LOG"
 
             CHANGELOG=""
             if [ -n "$FEATURES" ]; then
-              CHANGELOG="${CHANGELOG}### ✨ Features
-${FEATURES}
-"
+              CHANGELOG="${CHANGELOG}### Features${NL}${FEATURES}${NL}"
             fi
             if [ -n "$FIXES" ]; then
-              CHANGELOG="${CHANGELOG}### 🐛 Bug Fixes
-${FIXES}
-"
+              CHANGELOG="${CHANGELOG}### Bug Fixes${NL}${FIXES}${NL}"
             fi
             if [ -n "$REFACTORS" ]; then
-              CHANGELOG="${CHANGELOG}### ♻️ Refactoring
-${REFACTORS}
-"
+              CHANGELOG="${CHANGELOG}### Refactoring${NL}${REFACTORS}${NL}"
             fi
             if [ -n "$OTHER" ]; then
-              CHANGELOG="${CHANGELOG}### 📦 Other Changes
-${OTHER}
-"
+              CHANGELOG="${CHANGELOG}### Other Changes${NL}${OTHER}${NL}"
             fi
 
             # Fallback if all commits were filtered out (docs/ci/chore only)
