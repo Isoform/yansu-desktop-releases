@@ -21,11 +21,11 @@ on:
       environment:
         description: 'Target environment'
         required: true
-        default: 'production'
+        default: 'staging'
         type: choice
         options:
-          - production
           - staging
+          - production
       release_notes:
         description: 'Release notes (markdown supported)'
         required: false
@@ -61,18 +61,36 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Get the body of the latest non-draft release and extract the source commit SHA
-          PREV_SHA=$(gh release list --repo "${{ github.repository }}" --limit 20 --exclude-drafts \
-            --json tagName -q '.[].tagName' 2>/dev/null \
-            | sort -V | tail -1 \
-            | xargs -I{} gh release view {} --repo "${{ github.repository }}" --json body -q '.body' 2>/dev/null \
-            | grep -oP '<!-- source-commit: \K[0-9a-f]+(?= -->)' || true)
+          ENVIRONMENT="${{ inputs.environment || github.event.client_payload.environment || 'production' }}"
+
+          if [ "$ENVIRONMENT" = "staging" ]; then
+            # Staging: anchor to the latest release of ANY type (including betas).
+            # This gives each beta an incremental changelog showing only what's new.
+            PREV_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
+              --json tagName -q '.[].tagName' 2>/dev/null \
+              | sort -V | tail -1 || true)
+            echo "Staging changelog anchor: latest release of any type"
+          else
+            # Production: anchor to the last PRODUCTION (non-prerelease) release.
+            # This ensures the stable changelog covers everything since the previous
+            # stable version, even if many betas were published in between.
+            PREV_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
+              --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
+              | sort -V | tail -1 || true)
+            echo "Production changelog anchor: latest production release only"
+          fi
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "Previous release tag: $PREV_TAG"
+            PREV_SHA=$(gh release view "$PREV_TAG" --repo "${{ github.repository }}" --json body -q '.body' 2>/dev/null \
+              | grep -oP '<!-- source-commit: \K[0-9a-f]+(?= -->)' || true)
+          fi
 
           if [ -z "$PREV_SHA" ]; then
             echo "No previous source commit found, will use last 30 commits as fallback"
             echo "PREV_SHA=" >> "$GITHUB_OUTPUT"
           else
-            echo "Previous source commit: $PREV_SHA"
+            echo "Previous source commit: $PREV_SHA (from $PREV_TAG)"
             echo "PREV_SHA=$PREV_SHA" >> "$GITHUB_OUTPUT"
           fi
 
