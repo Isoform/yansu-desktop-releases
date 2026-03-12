@@ -33,14 +33,13 @@ jobs:
 
           echo "Latest release: ${TAG}"
 
-      - name: Download auto-update assets from GitHub Release
+      - name: Download release assets from GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.release.outputs.TAG }}"
           mkdir -p r2-upload
 
-          # Download only auto-update assets (.gz files)
           ASSETS=(
             "${{ env.APP_NAME }}-darwin-arm64.app.tar.gz"
             "${{ env.APP_NAME }}-darwin-amd64.app.tar.gz"
@@ -48,6 +47,10 @@ jobs:
             "${{ env.APP_NAME }}-darwin-amd64.gz"
             "${{ env.APP_NAME }}-linux-amd64.gz"
             "${{ env.APP_NAME }}-windows-amd64.gz"
+            "${{ env.APP_NAME }}-darwin-arm64.dmg"
+            "${{ env.APP_NAME }}-darwin-amd64.dmg"
+            "${{ env.APP_NAME }}-linux-amd64.tar.gz"
+            "${{ env.APP_NAME }}-windows-amd64.zip"
           )
 
           for ASSET in "${ASSETS[@]}"; do
@@ -70,6 +73,8 @@ jobs:
           BASE_URL="${R2_PUBLIC_URL}/releases/${TAG}"
           NOTES=$(cat /tmp/release_notes.txt)
 
+          LATEST_URL="${R2_PUBLIC_URL}/latest"
+
           jq -n \
             --arg ver "$VERSION_NUM" \
             --arg notes "$NOTES" \
@@ -77,6 +82,10 @@ jobs:
             --arg di "${BASE_URL}/${{ env.APP_NAME }}-darwin-amd64.app.tar.gz" \
             --arg la "${BASE_URL}/${{ env.APP_NAME }}-linux-amd64.gz" \
             --arg wa "${BASE_URL}/${{ env.APP_NAME }}-windows-amd64.gz" \
+            --arg dld_mac_arm64 "${LATEST_URL}/${{ env.APP_NAME }}-darwin-arm64.dmg" \
+            --arg dld_mac_amd64 "${LATEST_URL}/${{ env.APP_NAME }}-darwin-amd64.dmg" \
+            --arg dld_linux "${LATEST_URL}/${{ env.APP_NAME }}-linux-amd64.tar.gz" \
+            --arg dld_windows "${LATEST_URL}/${{ env.APP_NAME }}-windows-amd64.zip" \
             '{
               version: $ver,
               release_notes: $notes,
@@ -85,6 +94,12 @@ jobs:
                 "darwin-amd64": $di,
                 "linux-amd64": $la,
                 "windows-amd64": $wa
+              },
+              downloads: {
+                "darwin-arm64": $dld_mac_arm64,
+                "darwin-amd64": $dld_mac_amd64,
+                "linux-amd64": $dld_linux,
+                "windows-amd64": $dld_windows
               }
             }' > r2-upload/version.json
 
@@ -107,6 +122,21 @@ jobs:
             --exclude "version.json"
 
           echo "Uploaded release ${TAG} to R2"
+
+      - name: Upload latest files to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          aws s3 cp r2-upload/ "s3://${R2_BUCKET}/latest/" \
+            --recursive \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --region auto \
+            --exclude "version.json"
+
+          echo "Updated latest/ with latest release files"
 
       - name: Update latest version.json
         env:
@@ -132,8 +162,12 @@ jobs:
           curl -sf "${R2_PUBLIC_URL}/version.json" | jq .
 
           echo ""
-          echo "=== Verifying asset accessibility (HEAD request) ==="
+          echo "=== Verifying versioned asset (HEAD request) ==="
           curl -sfI "${R2_PUBLIC_URL}/releases/${TAG}/${{ env.APP_NAME }}-linux-amd64.gz" | head -5
+
+          echo ""
+          echo "=== Verifying latest/ path (HEAD request) ==="
+          curl -sfI "${R2_PUBLIC_URL}/latest/${{ env.APP_NAME }}-linux-amd64.gz" | head -5
 
           echo ""
           echo "R2 upload verified successfully"
