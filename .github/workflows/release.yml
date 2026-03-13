@@ -321,11 +321,13 @@ jobs:
 
       - name: Set release notes
         id: notes
+        env:
+          NOTES: ${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
         run: |
-          NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes || 'Bug fixes and improvements.' }}"
           {
             echo "BODY<<EOF"
-            echo "Yansu Desktop ${{ needs.resolve-version.outputs.version }}"
+            echo "Yansu Desktop $VERSION"
             echo ""
             echo "$NOTES"
             echo "EOF"
@@ -334,11 +336,11 @@ jobs:
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
+          RELEASE_BODY: ${{ steps.notes.outputs.BODY }}
         run: |
-          VERSION="${{ needs.resolve-version.outputs.version }}"
-          REPO="${{ github.repository }}"
           gh release create "$VERSION" \
-            --repo "$REPO" \
+            --repo "${{ github.repository }}" \
             --title "Yansu Desktop $VERSION" \
-            --notes "${{ steps.notes.outputs.BODY }}" \
+            --notes "$RELEASE_BODY" \
             release/*
