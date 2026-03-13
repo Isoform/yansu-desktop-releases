@@ -18,11 +18,6 @@ on:
           - patch
           - minor
           - major
-      prerelease:
-        description: 'Mark as pre-release (beta)'
-        required: false
-        default: false
-        type: boolean
       release_notes:
         description: 'Release notes (markdown supported)'
         required: false
@@ -58,21 +53,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          IS_PRERELEASE="${{ inputs.prerelease || github.event.client_payload.prerelease || 'false' }}"
-
-          if [ "$IS_PRERELEASE" = "true" ]; then
-            # Pre-release: anchor to the latest release of ANY type (including betas).
-            PREV_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
-              --json tagName -q '.[].tagName' 2>/dev/null \
-              | sort -V | tail -1 || true)
-            echo "Pre-release changelog anchor: latest release of any type"
-          else
-            # Production: anchor to the last stable (non-prerelease) release.
-            PREV_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
-              --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
-              | sort -V | tail -1 || true)
-            echo "Production changelog anchor: latest production release only"
-          fi
+          PREV_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
+            --json tagName -q '.[].tagName' 2>/dev/null \
+            | sort -V | tail -1 || true)
 
           if [ -n "$PREV_TAG" ]; then
             echo "Previous release tag: $PREV_TAG"
@@ -172,20 +155,16 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.VERSION }}
       version_num: ${{ steps.resolve.outputs.VERSION_NUM }}
-      is_prerelease: ${{ steps.resolve.outputs.IS_PRERELEASE }}
     steps:
       - name: Resolve version
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          IS_PRERELEASE="${{ inputs.prerelease || github.event.client_payload.prerelease || 'false' }}"
-          echo "IS_PRERELEASE=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
-
-          # Helper: find latest production (non-prerelease) tag via semver sort.
-          find_latest_prod() {
+          # Helper: find latest release tag via semver sort.
+          find_latest() {
             gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
-              --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
+              --json tagName -q '.[].tagName' 2>/dev/null \
               | sort -V | tail -1
           }
 
@@ -206,52 +185,21 @@ jobs:
           # Use explicitly provided version if available
           EXPLICIT="${{ github.event.client_payload.version || inputs.version }}"
           if [ -n "$EXPLICIT" ]; then
-            if [ "$IS_PRERELEASE" = "true" ]; then
-              case "$EXPLICIT" in
-                *-beta*) ;; # already has suffix
-                *) EXPLICIT="${EXPLICIT}-beta.1" ;;
-              esac
-            fi
             echo "Using explicit version: $EXPLICIT"
             echo "VERSION=${EXPLICIT}" >> "$GITHUB_OUTPUT"
-            CLEAN="${EXPLICIT#v}"
-            CLEAN="${CLEAN%%-beta.*}"
-            echo "VERSION_NUM=${CLEAN}" >> "$GITHUB_OUTPUT"
+            echo "VERSION_NUM=${EXPLICIT#v}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Find latest production release (always needed as baseline)
-          PROD_LATEST=$(find_latest_prod)
-          PROD_LATEST="${PROD_LATEST:-v0.0.0}"
-          echo "Latest production release: $PROD_LATEST"
+          # Auto-increment from latest release
+          LATEST=$(find_latest)
+          LATEST="${LATEST:-v0.0.0}"
+          echo "Latest release: $LATEST"
 
-          if [ "$IS_PRERELEASE" = "true" ]; then
-            # Pre-release: next prod version + beta sequence.
-            NEXT_BASE=$(bump_version "$PROD_LATEST" "${{ inputs.bump_type || 'patch' }}")
-
-            LATEST_BETA=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
-              --json tagName -q '.[].tagName' 2>/dev/null \
-              | grep "^${NEXT_BASE}-beta\." | sort -V | tail -1)
-
-            if [ -z "$LATEST_BETA" ]; then
-              VERSION="${NEXT_BASE}-beta.1"
-            else
-              SEQ="${LATEST_BETA##*-beta.}"
-              VERSION="${NEXT_BASE}-beta.$((SEQ + 1))"
-            fi
-
-            echo "Auto-incremented pre-release version: $VERSION (based on prod $PROD_LATEST)"
-            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-            CLEAN="${VERSION#v}"
-            CLEAN="${CLEAN%%-beta.*}"
-            echo "VERSION_NUM=${CLEAN}" >> "$GITHUB_OUTPUT"
-          else
-            # Production: bump from latest prod release
-            VERSION=$(bump_version "$PROD_LATEST" "${{ inputs.bump_type || 'patch' }}")
-            echo "Auto-incremented production version: $VERSION"
-            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "VERSION_NUM=${VERSION#v}" >> "$GITHUB_OUTPUT"
-          fi
+          VERSION=$(bump_version "$LATEST" "${{ inputs.bump_type || 'patch' }}")
+          echo "Auto-incremented version: $VERSION"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "VERSION_NUM=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
   build-macos:
     name: Build macOS (${{ matrix.arch }})
@@ -581,16 +529,11 @@ jobs:
             NOTES="${{ needs.generate-changelog.outputs.changelog }}"
           fi
 
-          ENV_LABEL=""
-          if [ "${{ needs.resolve-version.outputs.is_prerelease }}" = "true" ]; then
-            ENV_LABEL=" (Pre-release)"
-          fi
-
           SOURCE_COMMIT="${{ needs.generate-changelog.outputs.source_commit }}"
 
           {
             echo "BODY<<EOF"
-            echo "## Yansu Desktop ${{ needs.resolve-version.outputs.version }}${ENV_LABEL}"
+            echo "## Yansu Desktop ${{ needs.resolve-version.outputs.version }}"
             echo ""
             echo "$NOTES"
             echo ""
@@ -604,15 +547,10 @@ jobs:
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
-          PRERELEASE_FLAG=""
-          if [ "${{ needs.resolve-version.outputs.is_prerelease }}" = "true" ]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
           gh release create "$VERSION" \
             --repo "$REPO" \
             --title "Yansu Desktop $VERSION" \
             --notes "${{ steps.notes.outputs.BODY }}" \
-            $PRERELEASE_FLAG \
             release/*
 
   upload-to-r2:
