@@ -18,14 +18,11 @@ on:
           - patch
           - minor
           - major
-      environment:
-        description: 'Target environment'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          - production
+      prerelease:
+        description: 'Mark as pre-release (beta)'
+        required: false
+        default: false
+        type: boolean
       release_notes:
         description: 'Release notes (markdown supported)'
         required: false
@@ -61,19 +58,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ENVIRONMENT="${{ inputs.environment || github.event.client_payload.environment || 'production' }}"
+          IS_PRERELEASE="${{ inputs.prerelease || github.event.client_payload.prerelease || 'false' }}"
 
-          if [ "$ENVIRONMENT" = "staging" ]; then
-            # Staging: anchor to the latest release of ANY type (including betas).
-            # This gives each beta an incremental changelog showing only what's new.
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            # Pre-release: anchor to the latest release of ANY type (including betas).
             PREV_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
               --json tagName -q '.[].tagName' 2>/dev/null \
               | sort -V | tail -1 || true)
-            echo "Staging changelog anchor: latest release of any type"
+            echo "Pre-release changelog anchor: latest release of any type"
           else
-            # Production: anchor to the last PRODUCTION (non-prerelease) release.
-            # This ensures the stable changelog covers everything since the previous
-            # stable version, even if many betas were published in between.
+            # Production: anchor to the last stable (non-prerelease) release.
             PREV_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
               --json tagName,isPrerelease -q '.[] | select(.isPrerelease == false) | .tagName' 2>/dev/null \
               | sort -V | tail -1 || true)
@@ -178,21 +172,15 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.VERSION }}
       version_num: ${{ steps.resolve.outputs.VERSION_NUM }}
-      environment: ${{ steps.resolve.outputs.ENVIRONMENT }}
-      is_staging: ${{ steps.resolve.outputs.IS_STAGING }}
+      is_prerelease: ${{ steps.resolve.outputs.IS_PRERELEASE }}
     steps:
       - name: Resolve version
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ENVIRONMENT="${{ inputs.environment || github.event.client_payload.environment || 'production' }}"
-          echo "ENVIRONMENT=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
-          if [ "$ENVIRONMENT" = "staging" ]; then
-            echo "IS_STAGING=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "IS_STAGING=false" >> "$GITHUB_OUTPUT"
-          fi
+          IS_PRERELEASE="${{ inputs.prerelease || github.event.client_payload.prerelease || 'false' }}"
+          echo "IS_PRERELEASE=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
 
           # Helper: find latest production (non-prerelease) tag via semver sort.
           find_latest_prod() {
@@ -218,20 +206,10 @@ jobs:
           # Use explicitly provided version if available
           EXPLICIT="${{ github.event.client_payload.version || inputs.version }}"
           if [ -n "$EXPLICIT" ]; then
-            if [ "$ENVIRONMENT" = "staging" ]; then
-              # Ensure staging versions always carry a -beta suffix.
-              # If the user supplied a plain version like v0.1.60, append -beta.1.
+            if [ "$IS_PRERELEASE" = "true" ]; then
               case "$EXPLICIT" in
                 *-beta*) ;; # already has suffix
                 *) EXPLICIT="${EXPLICIT}-beta.1" ;;
-              esac
-            else
-              # Production must never use a pre-release tag
-              case "$EXPLICIT" in
-                *-beta*)
-                  echo "::error::Cannot use a beta version tag for a production release: $EXPLICIT"
-                  exit 1
-                  ;;
               esac
             fi
             echo "Using explicit version: $EXPLICIT"
@@ -247,12 +225,10 @@ jobs:
           PROD_LATEST="${PROD_LATEST:-v0.0.0}"
           echo "Latest production release: $PROD_LATEST"
 
-          if [ "$ENVIRONMENT" = "staging" ]; then
-            # Staging: next prod version + beta sequence.
-            # e.g. prod=v0.1.59 → staging=v0.1.60-beta.1, v0.1.60-beta.2, ...
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            # Pre-release: next prod version + beta sequence.
             NEXT_BASE=$(bump_version "$PROD_LATEST" "${{ inputs.bump_type || 'patch' }}")
 
-            # Find latest beta for this base version
             LATEST_BETA=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
               --json tagName -q '.[].tagName' 2>/dev/null \
               | grep "^${NEXT_BASE}-beta\." | sort -V | tail -1)
@@ -264,7 +240,7 @@ jobs:
               VERSION="${NEXT_BASE}-beta.$((SEQ + 1))"
             fi
 
-            echo "Auto-incremented staging version: $VERSION (based on prod $PROD_LATEST)"
+            echo "Auto-incremented pre-release version: $VERSION (based on prod $PROD_LATEST)"
             echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
             CLEAN="${VERSION#v}"
             CLEAN="${CLEAN%%-beta.*}"
@@ -342,14 +318,10 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
-      - name: Compute environment ldflags
+      - name: Compute ldflags
         id: env-ldflags
         run: |
-          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
-            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
-          else
-            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
-          fi
+          echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
 
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
@@ -447,14 +419,10 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
-      - name: Compute environment ldflags
+      - name: Compute ldflags
         id: env-ldflags
         run: |
-          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
-            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
-          else
-            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
-          fi
+          echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
 
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
@@ -528,15 +496,11 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/frontend
         run: pnpm install
 
-      - name: Compute environment ldflags
+      - name: Compute ldflags
         id: env-ldflags
         shell: bash
         run: |
-          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
-            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://staging-dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/staging/version.json" >> "$GITHUB_OUTPUT"
-          else
-            echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
-          fi
+          echo "LDFLAGS=-X main.DefaultWebBaseURL=https://dashboard.yansu.ai -X main.R2ManifestURL=${{ secrets.R2_PUBLIC_URL }}/version.json" >> "$GITHUB_OUTPUT"
 
       - name: Build, embed & package
         working-directory: source/${{ env.SOURCE_PATH }}
@@ -618,8 +582,8 @@ jobs:
           fi
 
           ENV_LABEL=""
-          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
-            ENV_LABEL=" (Staging)"
+          if [ "${{ needs.resolve-version.outputs.is_prerelease }}" = "true" ]; then
+            ENV_LABEL=" (Pre-release)"
           fi
 
           SOURCE_COMMIT="${{ needs.generate-changelog.outputs.source_commit }}"
@@ -641,7 +605,7 @@ jobs:
           VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
           PRERELEASE_FLAG=""
-          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
+          if [ "${{ needs.resolve-version.outputs.is_prerelease }}" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
           fi
           gh release create "$VERSION" \
@@ -685,11 +649,7 @@ jobs:
             NOTES="${{ needs.generate-changelog.outputs.changelog }}"
           fi
 
-          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
-            LATEST_URL="${R2_PUBLIC_URL}/staging/latest"
-          else
-            LATEST_URL="${R2_PUBLIC_URL}/latest"
-          fi
+          LATEST_URL="${R2_PUBLIC_URL}/latest"
 
           jq -n \
             --arg ver "$VERSION_NUM" \
@@ -746,19 +706,13 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
-            LATEST_PATH="staging/latest"
-          else
-            LATEST_PATH="latest"
-          fi
-
-          aws s3 cp r2-upload/ "s3://${R2_BUCKET}/${LATEST_PATH}/" \
+          aws s3 cp r2-upload/ "s3://${R2_BUCKET}/latest/" \
             --recursive \
             --endpoint-url "${R2_ENDPOINT}" \
             --region auto \
             --exclude "version.json"
 
-          echo "Updated ${LATEST_PATH}/ with latest release files"
+          echo "Updated latest/ with latest release files"
 
       - name: Update latest version.json
         env:
@@ -767,15 +721,9 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          if [ "${{ needs.resolve-version.outputs.is_staging }}" = "true" ]; then
-            R2_MANIFEST_PATH="staging/version.json"
-          else
-            R2_MANIFEST_PATH="version.json"
-          fi
-
-          aws s3 cp r2-upload/version.json "s3://${R2_BUCKET}/${R2_MANIFEST_PATH}" \
+          aws s3 cp r2-upload/version.json "s3://${R2_BUCKET}/version.json" \
             --endpoint-url "${R2_ENDPOINT}" \
             --region auto \
             --content-type "application/json"
 
-          echo "Updated ${R2_MANIFEST_PATH}"
+          echo "Updated version.json"
