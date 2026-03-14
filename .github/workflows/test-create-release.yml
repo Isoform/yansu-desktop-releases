@@ -1,0 +1,47 @@
+name: Test Create Release (env body)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-create-release:
+    name: Create draft release with env body
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create draft release with body containing special chars
+        id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BODY: |
+            ## Test Release (env body)
+
+            ### Bug Fixes
+            - fix(wails-gui): allow sending messages during agent warmup (#1024)
+            - fix(wails-gui): inject sub2api eagerly instead of probing native auth (#1021)
+
+            ### Other Changes
+            - Revert "fix(wails-gui): inject sub2api eagerly instead of probing native auth (#1021)"
+
+            <!-- source-commit: a66a9f22585ccab0958587619ef13fbfa70a3fa7 -->
+        run: |
+          REPO="${{ github.repository }}"
+          TAG="test/create-release-env-${{ github.run_id }}"
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --draft \
+            --title "Test Create Release (env) $TAG" \
+            --notes "$RELEASE_BODY"
+          echo "CREATED_TAG=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Delete draft release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.create.outputs.CREATED_TAG }}"
+          if [ -n "$TAG" ]; then
+            gh release delete "$TAG" --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          fi
