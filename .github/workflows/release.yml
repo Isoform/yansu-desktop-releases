@@ -548,13 +548,14 @@ jobs:
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_BODY: ${{ steps.notes.outputs.BODY }}
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
           gh release create "$VERSION" \
             --repo "$REPO" \
             --title "Yansu Desktop $VERSION" \
-            --notes "${{ steps.notes.outputs.BODY }}" \
+            --notes "$RELEASE_BODY" \
             release/*
 
   upload-to-r2:
