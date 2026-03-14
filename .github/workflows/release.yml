@@ -522,13 +522,15 @@ jobs:
 
       - name: Set release notes
         id: notes
+        env:
+          CHANGELOG_FROM_JOB: ${{ needs.generate-changelog.outputs.changelog }}
+          MANUAL_NOTES_INPUT: ${{ github.event.client_payload.release_notes || inputs.release_notes }}
         run: |
           # Use manually provided notes if given, otherwise use auto-generated changelog
-          MANUAL_NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes }}"
-          if [ -n "$MANUAL_NOTES" ] && [ "$MANUAL_NOTES" != "Bug fixes and improvements." ]; then
-            NOTES="$MANUAL_NOTES"
+          if [ -n "$MANUAL_NOTES_INPUT" ] && [ "$MANUAL_NOTES_INPUT" != "Bug fixes and improvements." ]; then
+            NOTES="$MANUAL_NOTES_INPUT"
           else
-            NOTES="${{ needs.generate-changelog.outputs.changelog }}"
+            NOTES="$CHANGELOG_FROM_JOB"
           fi
 
           SOURCE_COMMIT="${{ needs.generate-changelog.outputs.source_commit }}"
@@ -578,15 +580,16 @@ jobs:
       - name: Generate version.json manifest
         env:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          CHANGELOG_FROM_JOB: ${{ needs.generate-changelog.outputs.changelog }}
+          MANUAL_NOTES_INPUT: ${{ github.event.client_payload.release_notes || inputs.release_notes }}
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           VERSION_NUM="${{ needs.resolve-version.outputs.version_num }}"
           BASE_URL="${R2_PUBLIC_URL}/releases/${VERSION}"
-          MANUAL_NOTES="${{ github.event.client_payload.release_notes || inputs.release_notes }}"
-          if [ -n "$MANUAL_NOTES" ] && [ "$MANUAL_NOTES" != "Bug fixes and improvements." ]; then
-            NOTES="$MANUAL_NOTES"
+          if [ -n "$MANUAL_NOTES_INPUT" ] && [ "$MANUAL_NOTES_INPUT" != "Bug fixes and improvements." ]; then
+            NOTES="$MANUAL_NOTES_INPUT"
           else
-            NOTES="${{ needs.generate-changelog.outputs.changelog }}"
+            NOTES="$CHANGELOG_FROM_JOB"
           fi
 
           LATEST_URL="${R2_PUBLIC_URL}/latest"
