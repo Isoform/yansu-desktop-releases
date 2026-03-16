@@ -211,7 +211,7 @@ jobs:
           echo "VERSION_NUM=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
   build-macos:
-    name: Build macOS (${{ matrix.arch }})
+    name: Build macOS (${{ matrix.display_arch }})
     needs: [resolve-version]
     runs-on: macos-latest
     strategy:
@@ -427,7 +427,7 @@ jobs:
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.gz
 
   build-windows:
-    name: Build Windows (amd64)
+    name: Build Windows (x64)
     needs: [resolve-version]
     runs-on: windows-latest
 
