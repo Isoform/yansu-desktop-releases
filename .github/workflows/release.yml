@@ -216,7 +216,11 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        arch: [arm64, amd64]
+        include:
+          - arch: arm64
+            display_arch: arm64
+          - arch: amd64
+            display_arch: x64
 
     steps:
       - name: Checkout source repo
@@ -303,8 +307,8 @@ jobs:
       - name: Rename DMG with arch suffix
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         run: |
-          mv "${{ env.APP_NAME }}.dmg" "${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg"
-          echo "DMG: $(du -sh ${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg | cut -f1)"
+          mv "${{ env.APP_NAME }}.dmg" "${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.dmg"
+          echo "DMG: $(du -sh ${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.dmg | cut -f1)"
 
       - name: Package — .app.tar.gz (auto-update) + .gz (legacy)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
@@ -325,14 +329,23 @@ jobs:
         with:
           name: ${{ env.APP_NAME }}-darwin-${{ matrix.arch }}
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.dmg
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.dmg
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.app.tar.gz
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.gz
 
   build-linux:
-    name: Build Linux (amd64)
+    name: Build Linux (${{ matrix.display_arch }})
     needs: [resolve-version]
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+            display_arch: x64
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            display_arch: arm64
 
     steps:
       - name: Checkout source repo
@@ -388,7 +401,7 @@ jobs:
           CODEX_ACP_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         run: |
           BUILD_ARGS=(
-            --platform linux/amd64
+            --platform linux/${{ matrix.arch }}
             --version ${{ needs.resolve-version.outputs.version_num }}
           )
           if [ -n "${{ steps.env-ldflags.outputs.LDFLAGS }}" ]; then
@@ -399,21 +412,19 @@ jobs:
       - name: Package — .tar.gz (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         run: |
-          TAR="${{ env.APP_NAME }}-linux-amd64.tar.gz"
-          GZ="${{ env.APP_NAME }}-linux-amd64.gz"
-          # .tar.gz contains binary + all bundled dependencies (preserves Unix permissions)
+          TAR="${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.tar.gz"
           tar czf "$TAR" "${{ env.APP_NAME }}" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
-          # .gz is the bare binary for auto-update
+          GZ="${{ env.APP_NAME }}-linux-${{ matrix.arch }}.gz"
           gzip -c "${{ env.APP_NAME }}" > "$GZ"
           echo "TAR: $(du -sh $TAR | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-amd64
+          name: ${{ env.APP_NAME }}-linux-${{ matrix.arch }}
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.tar.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-amd64.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.tar.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.gz
 
   build-windows:
     name: Build Windows (amd64)
@@ -479,11 +490,9 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         shell: bash
         run: |
-          ZIP="${{ env.APP_NAME }}-windows-amd64.zip"
+          ZIP="${{ env.APP_NAME }}-windows-x64.zip"
           GZ="${{ env.APP_NAME }}-windows-amd64.gz"
-          # .zip contains exe + all bundled dependencies (acp, bun, codex-acp, yansu-cli)
           7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
-          # .gz is the bare binary for auto-update
           gzip -c "${{ env.APP_NAME }}.exe" > "$GZ"
           echo "ZIP: $(du -sh $ZIP | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
 
@@ -492,7 +501,7 @@ jobs:
         with:
           name: ${{ env.APP_NAME }}-windows-amd64
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.zip
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-x64.zip
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.gz
 
   release:
@@ -608,11 +617,13 @@ jobs:
             --arg da "${BASE_URL}/Yansu-darwin-arm64.app.tar.gz" \
             --arg di "${BASE_URL}/Yansu-darwin-amd64.app.tar.gz" \
             --arg la "${BASE_URL}/Yansu-linux-amd64.gz" \
+            --arg la_arm64 "${BASE_URL}/Yansu-linux-arm64.gz" \
             --arg wa "${BASE_URL}/Yansu-windows-amd64.gz" \
             --arg dld_mac_arm64 "${LATEST_URL}/Yansu-darwin-arm64.dmg" \
-            --arg dld_mac_amd64 "${LATEST_URL}/Yansu-darwin-amd64.dmg" \
-            --arg dld_linux "${LATEST_URL}/Yansu-linux-amd64.tar.gz" \
-            --arg dld_windows "${LATEST_URL}/Yansu-windows-amd64.zip" \
+            --arg dld_mac_x64 "${LATEST_URL}/Yansu-darwin-x64.dmg" \
+            --arg dld_linux_x64 "${LATEST_URL}/Yansu-linux-x64.tar.gz" \
+            --arg dld_linux_arm64 "${LATEST_URL}/Yansu-linux-arm64.tar.gz" \
+            --arg dld_windows "${LATEST_URL}/Yansu-windows-x64.zip" \
             '{
               version: $ver,
               release_notes: $notes,
@@ -620,13 +631,15 @@ jobs:
                 "darwin-arm64": $da,
                 "darwin-amd64": $di,
                 "linux-amd64": $la,
+                "linux-arm64": $la_arm64,
                 "windows-amd64": $wa
               },
               downloads: {
                 "darwin-arm64": $dld_mac_arm64,
-                "darwin-amd64": $dld_mac_amd64,
-                "linux-amd64": $dld_linux,
-                "windows-amd64": $dld_windows
+                "darwin-x64": $dld_mac_x64,
+                "linux-x64": $dld_linux_x64,
+                "linux-arm64": $dld_linux_arm64,
+                "windows-x64": $dld_windows
               }
             }' > r2-upload/version.json
 
