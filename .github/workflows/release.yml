@@ -314,24 +314,24 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         run: |
           # .app.tar.gz: full signed+notarized bundle for self-update (preserves codesign)
-          APP_TAR="${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.app.tar.gz"
+          APP_TAR="${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.app.tar.gz"
           tar -czf "$APP_TAR" "${{ env.APP_NAME }}.app"
           echo "APP_TAR: $(du -sh $APP_TAR | cut -f1)"
 
           # .gz: bare binary (legacy, kept for older clients)
           BINARY="${{ env.APP_NAME }}.app/Contents/MacOS/${{ env.APP_NAME }}"
-          GZ="${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.gz"
+          GZ="${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.gz"
           gzip -c "$BINARY" > "$GZ"
           echo "GZ: $(du -sh $GZ | cut -f1)"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-darwin-${{ matrix.arch }}
+          name: ${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}
           path: |
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.dmg
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.app.tar.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.arch }}.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.app.tar.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.gz
 
   build-linux:
     name: Build Linux (${{ matrix.display_arch }})
@@ -414,17 +414,17 @@ jobs:
         run: |
           TAR="${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.tar.gz"
           tar czf "$TAR" "${{ env.APP_NAME }}" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
-          GZ="${{ env.APP_NAME }}-linux-${{ matrix.arch }}.gz"
+          GZ="${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.gz"
           gzip -c "${{ env.APP_NAME }}" > "$GZ"
           echo "TAR: $(du -sh $TAR | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-${{ matrix.arch }}
+          name: ${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}
           path: |
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.tar.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.gz
 
   build-windows:
     name: Build Windows (x64)
@@ -491,7 +491,7 @@ jobs:
         shell: bash
         run: |
           ZIP="${{ env.APP_NAME }}-windows-x64.zip"
-          GZ="${{ env.APP_NAME }}-windows-amd64.gz"
+          GZ="${{ env.APP_NAME }}-windows-x64.gz"
           7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
           gzip -c "${{ env.APP_NAME }}.exe" > "$GZ"
           echo "ZIP: $(du -sh $ZIP | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
@@ -499,10 +499,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-windows-amd64
+          name: ${{ env.APP_NAME }}-windows-x64
           path: |
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-x64.zip
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-amd64.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-x64.gz
 
   release:
     name: Create Release
@@ -614,32 +614,35 @@ jobs:
           jq -n \
             --arg ver "$VERSION_NUM" \
             --arg notes "$NOTES" \
-            --arg da "${BASE_URL}/Yansu-darwin-arm64.app.tar.gz" \
-            --arg di "${BASE_URL}/Yansu-darwin-amd64.app.tar.gz" \
-            --arg la "${BASE_URL}/Yansu-linux-amd64.gz" \
+            --arg da_arm64 "${BASE_URL}/Yansu-darwin-arm64.app.tar.gz" \
+            --arg da_x64 "${BASE_URL}/Yansu-darwin-x64.app.tar.gz" \
+            --arg la_x64 "${BASE_URL}/Yansu-linux-x64.gz" \
             --arg la_arm64 "${BASE_URL}/Yansu-linux-arm64.gz" \
-            --arg wa "${BASE_URL}/Yansu-windows-amd64.gz" \
+            --arg wa_x64 "${BASE_URL}/Yansu-windows-x64.gz" \
             --arg dld_mac_arm64 "${LATEST_URL}/Yansu-darwin-arm64.dmg" \
             --arg dld_mac_x64 "${LATEST_URL}/Yansu-darwin-x64.dmg" \
             --arg dld_linux_x64 "${LATEST_URL}/Yansu-linux-x64.tar.gz" \
             --arg dld_linux_arm64 "${LATEST_URL}/Yansu-linux-arm64.tar.gz" \
-            --arg dld_windows "${LATEST_URL}/Yansu-windows-x64.zip" \
+            --arg dld_windows_x64 "${LATEST_URL}/Yansu-windows-x64.zip" \
             '{
               version: $ver,
               release_notes: $notes,
               assets: {
-                "darwin-arm64": $da,
-                "darwin-amd64": $di,
-                "linux-amd64": $la,
+                "darwin-arm64": $da_arm64,
+                "darwin-x64": $da_x64,
+                "darwin-amd64": $da_x64,
+                "linux-x64": $la_x64,
+                "linux-amd64": $la_x64,
                 "linux-arm64": $la_arm64,
-                "windows-amd64": $wa
+                "windows-x64": $wa_x64,
+                "windows-amd64": $wa_x64
               },
               downloads: {
                 "darwin-arm64": $dld_mac_arm64,
                 "darwin-x64": $dld_mac_x64,
                 "linux-x64": $dld_linux_x64,
                 "linux-arm64": $dld_linux_arm64,
-                "windows-x64": $dld_windows
+                "windows-x64": $dld_windows_x64
               }
             }' > r2-upload/version.json
 
