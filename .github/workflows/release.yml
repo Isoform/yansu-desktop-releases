@@ -34,7 +34,7 @@ env:
   APP_NAME: Yansu
   SOURCE_REPO: Isoform/something
   SOURCE_PATH: wails-gui
-  SOURCE_REF: main
+  SOURCE_REF: zerone0x/onboarding-crystals
 
 jobs:
   generate-changelog:
