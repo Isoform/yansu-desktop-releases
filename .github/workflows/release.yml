@@ -421,7 +421,7 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         run: |
           TAR="${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.tar.gz"
-          tar czf "$TAR" "${{ env.APP_NAME }}" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
+          tar czf "$TAR" "${{ env.APP_NAME }}" acp-bundle bun-bundle claude-bundle codex-acp-bundle ffmpeg-bundle git-bundle rtk-bundle whisper-bundle yansu-cli-bundle
           GZ="${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.gz"
           gzip -c "${{ env.APP_NAME }}" > "$GZ"
           echo "TAR: $(du -sh $TAR | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
@@ -504,7 +504,7 @@ jobs:
         run: |
           ZIP="${{ env.APP_NAME }}-windows-x64.zip"
           GZ="${{ env.APP_NAME }}-windows-x64.gz"
-          7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" acp-bundle bun-bundle codex-acp-bundle yansu-cli-bundle
+          7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" acp-bundle bun-bundle claude-bundle codex-acp-bundle ffmpeg-bundle git-bundle rtk-bundle whisper-bundle yansu-cli-bundle
           gzip -c "${{ env.APP_NAME }}.exe" > "$GZ"
           echo "ZIP: $(du -sh $ZIP | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
 
