@@ -623,6 +623,13 @@ jobs:
 
           LATEST_URL="${R2_PUBLIC_URL}/latest"
 
+          # Compute SHA-256 checksums for auto-update assets.
+          cs_da_arm64=$(sha256sum r2-upload/Yansu-darwin-arm64.app.tar.gz | cut -d' ' -f1)
+          cs_da_x64=$(sha256sum r2-upload/Yansu-darwin-x64.app.tar.gz | cut -d' ' -f1)
+          cs_la_x64=$(sha256sum r2-upload/Yansu-linux-x64.gz | cut -d' ' -f1)
+          cs_la_arm64=$(sha256sum r2-upload/Yansu-linux-arm64.gz | cut -d' ' -f1)
+          cs_wa_x64=$(sha256sum r2-upload/Yansu-windows-x64.gz | cut -d' ' -f1)
+
           jq -n \
             --arg ver "$VERSION_NUM" \
             --arg notes "$NOTES" \
@@ -636,6 +643,11 @@ jobs:
             --arg dld_linux_x64 "${LATEST_URL}/Yansu-linux-x64.tar.gz" \
             --arg dld_linux_arm64 "${LATEST_URL}/Yansu-linux-arm64.tar.gz" \
             --arg dld_windows_x64 "${LATEST_URL}/Yansu-windows-x64.zip" \
+            --arg cs_da_arm64 "$cs_da_arm64" \
+            --arg cs_da_x64 "$cs_da_x64" \
+            --arg cs_la_x64 "$cs_la_x64" \
+            --arg cs_la_arm64 "$cs_la_arm64" \
+            --arg cs_wa_x64 "$cs_wa_x64" \
             '{
               version: $ver,
               release_notes: $notes,
@@ -648,6 +660,16 @@ jobs:
                 "linux-arm64": $la_arm64,
                 "windows-x64": $wa_x64,
                 "windows-amd64": $wa_x64
+              },
+              checksums: {
+                "darwin-arm64": $cs_da_arm64,
+                "darwin-x64": $cs_da_x64,
+                "darwin-amd64": $cs_da_x64,
+                "linux-x64": $cs_la_x64,
+                "linux-amd64": $cs_la_x64,
+                "linux-arm64": $cs_la_arm64,
+                "windows-x64": $cs_wa_x64,
+                "windows-amd64": $cs_wa_x64
               },
               downloads: {
                 "darwin-arm64": $dld_mac_arm64,
