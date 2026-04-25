@@ -526,9 +526,35 @@ jobs:
 
       - name: Prepare release assets
         run: |
+          VERSION_NUM="${{ needs.resolve-version.outputs.version_num }}"
           mkdir -p release
           find artifacts -type f \( -name "*.gz" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} release/ \;
-          cd release && sha256sum * > checksums.txt
+
+          # Create versioned-suffix copies alongside the canonical unversioned files.
+          # Canonical names (e.g. Yansu-darwin-arm64.dmg) are preserved for
+          # release.yansu.app/latest/<file> URLs and self-updater fallback.
+          # Versioned twins (e.g. Yansu-darwin-arm64-0.1.241.dmg) give users
+          # archival distinguishability between downloaded packages.
+          cd release
+          for f in Yansu-*; do
+            case "$f" in
+              # Match longest extension first to avoid e.g. .gz catching .app.tar.gz
+              *.app.tar.gz) base="${f%.app.tar.gz}"; ext="app.tar.gz" ;;
+              *.tar.gz)     base="${f%.tar.gz}";     ext="tar.gz" ;;
+              *.dmg)        base="${f%.dmg}";        ext="dmg" ;;
+              *.zip)        base="${f%.zip}";        ext="zip" ;;
+              *.gz)         base="${f%.gz}";         ext="gz" ;;
+              *) continue ;;
+            esac
+            # Skip if this filename already contains the version suffix
+            case "$base" in
+              *-"$VERSION_NUM") continue ;;
+            esac
+            cp "$f" "${base}-${VERSION_NUM}.${ext}"
+          done
+
+          # checksums.txt covers BOTH unversioned canonical files and versioned twins
+          sha256sum Yansu-* > checksums.txt
           echo "=== Release assets ===" && ls -lh
 
       - name: Clean up stale draft release
@@ -596,8 +622,30 @@ jobs:
 
       - name: Prepare files for R2
         run: |
+          VERSION_NUM="${{ needs.resolve-version.outputs.version_num }}"
           mkdir -p r2-upload
           find artifacts -type f \( -name "*.gz" -o -name "*.app.tar.gz" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} r2-upload/ \;
+
+          # Create versioned-suffix copies alongside canonical unversioned files.
+          # Canonical names are preserved so version.json checksums/asset URLs and
+          # the release.yansu.app/latest/<file> hardcoded URLs keep working;
+          # versioned twins are mirrored to both releases/<version>/ and latest/.
+          cd r2-upload
+          for f in Yansu-*; do
+            case "$f" in
+              *.app.tar.gz) base="${f%.app.tar.gz}"; ext="app.tar.gz" ;;
+              *.tar.gz)     base="${f%.tar.gz}";     ext="tar.gz" ;;
+              *.dmg)        base="${f%.dmg}";        ext="dmg" ;;
+              *.zip)        base="${f%.zip}";        ext="zip" ;;
+              *.gz)         base="${f%.gz}";         ext="gz" ;;
+              *) continue ;;
+            esac
+            case "$base" in
+              *-"$VERSION_NUM") continue ;;
+            esac
+            cp "$f" "${base}-${VERSION_NUM}.${ext}"
+          done
+          cd ..
           echo "=== Files prepared for R2 ===" && ls -lh r2-upload/
 
       - name: Generate version.json manifest
