@@ -530,11 +530,10 @@ jobs:
           mkdir -p release
           find artifacts -type f \( -name "*.gz" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} release/ \;
 
-          # Create versioned-suffix copies alongside the canonical unversioned files.
-          # Canonical names (e.g. Yansu-darwin-arm64.dmg) are preserved for
-          # release.yansu.app/latest/<file> URLs and self-updater fallback.
-          # Versioned twins (e.g. Yansu-darwin-arm64-0.1.241.dmg) give users
-          # archival distinguishability between downloaded packages.
+          # Rename to versioned-suffix names (e.g. Yansu-darwin-arm64-0.1.241.dmg).
+          # Only versioned filenames are published; the marketing site / auto-updater
+          # resolves them at runtime. This keeps a single source of truth and makes
+          # downloaded packages archivally distinguishable.
           cd release
           for f in Yansu-*; do
             case "$f" in
@@ -546,14 +545,14 @@ jobs:
               *.gz)         base="${f%.gz}";         ext="gz" ;;
               *) continue ;;
             esac
-            # Skip if this filename already contains the version suffix
+            # Skip if this filename already contains the version suffix (idempotent)
             case "$base" in
               *-"$VERSION_NUM") continue ;;
             esac
-            cp "$f" "${base}-${VERSION_NUM}.${ext}"
+            mv "$f" "${base}-${VERSION_NUM}.${ext}"
           done
 
-          # checksums.txt covers BOTH unversioned canonical files and versioned twins
+          # checksums.txt covers the (only) versioned files
           sha256sum Yansu-* > checksums.txt
           echo "=== Release assets ===" && ls -lh
 
@@ -626,10 +625,10 @@ jobs:
           mkdir -p r2-upload
           find artifacts -type f \( -name "*.gz" -o -name "*.app.tar.gz" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} r2-upload/ \;
 
-          # Create versioned-suffix copies alongside canonical unversioned files.
-          # Canonical names are preserved so version.json checksums/asset URLs and
-          # the release.yansu.app/latest/<file> hardcoded URLs keep working;
-          # versioned twins are mirrored to both releases/<version>/ and latest/.
+          # Rename to versioned-suffix names. Both releases/<version>/ and latest/
+          # mirrors will only contain versioned filenames; consumers resolve them
+          # at runtime (marketing site via product-website PR Isoform/something#1608,
+          # auto-updater via wails-gui/version.go::platformAssetName).
           cd r2-upload
           for f in Yansu-*; do
             case "$f" in
@@ -643,7 +642,7 @@ jobs:
             case "$base" in
               *-"$VERSION_NUM") continue ;;
             esac
-            cp "$f" "${base}-${VERSION_NUM}.${ext}"
+            mv "$f" "${base}-${VERSION_NUM}.${ext}"
           done
           cd ..
           echo "=== Files prepared for R2 ===" && ls -lh r2-upload/
@@ -665,26 +664,26 @@ jobs:
 
           LATEST_URL="${R2_PUBLIC_URL}/latest"
 
-          # Compute SHA-256 checksums for auto-update assets.
-          cs_da_arm64=$(sha256sum r2-upload/Yansu-darwin-arm64.app.tar.gz | cut -d' ' -f1)
-          cs_da_x64=$(sha256sum r2-upload/Yansu-darwin-x64.app.tar.gz | cut -d' ' -f1)
-          cs_la_x64=$(sha256sum r2-upload/Yansu-linux-x64.gz | cut -d' ' -f1)
-          cs_la_arm64=$(sha256sum r2-upload/Yansu-linux-arm64.gz | cut -d' ' -f1)
-          cs_wa_x64=$(sha256sum r2-upload/Yansu-windows-x64.gz | cut -d' ' -f1)
+          # Compute SHA-256 checksums for auto-update assets (versioned filenames).
+          cs_da_arm64=$(sha256sum "r2-upload/Yansu-darwin-arm64-${VERSION_NUM}.app.tar.gz" | cut -d' ' -f1)
+          cs_da_x64=$(sha256sum "r2-upload/Yansu-darwin-x64-${VERSION_NUM}.app.tar.gz" | cut -d' ' -f1)
+          cs_la_x64=$(sha256sum "r2-upload/Yansu-linux-x64-${VERSION_NUM}.gz" | cut -d' ' -f1)
+          cs_la_arm64=$(sha256sum "r2-upload/Yansu-linux-arm64-${VERSION_NUM}.gz" | cut -d' ' -f1)
+          cs_wa_x64=$(sha256sum "r2-upload/Yansu-windows-x64-${VERSION_NUM}.gz" | cut -d' ' -f1)
 
           jq -n \
             --arg ver "$VERSION_NUM" \
             --arg notes "$NOTES" \
-            --arg da_arm64 "${BASE_URL}/Yansu-darwin-arm64.app.tar.gz" \
-            --arg da_x64 "${BASE_URL}/Yansu-darwin-x64.app.tar.gz" \
-            --arg la_x64 "${BASE_URL}/Yansu-linux-x64.gz" \
-            --arg la_arm64 "${BASE_URL}/Yansu-linux-arm64.gz" \
-            --arg wa_x64 "${BASE_URL}/Yansu-windows-x64.gz" \
-            --arg dld_mac_arm64 "${LATEST_URL}/Yansu-darwin-arm64.dmg" \
-            --arg dld_mac_x64 "${LATEST_URL}/Yansu-darwin-x64.dmg" \
-            --arg dld_linux_x64 "${LATEST_URL}/Yansu-linux-x64.tar.gz" \
-            --arg dld_linux_arm64 "${LATEST_URL}/Yansu-linux-arm64.tar.gz" \
-            --arg dld_windows_x64 "${LATEST_URL}/Yansu-windows-x64.zip" \
+            --arg da_arm64 "${BASE_URL}/Yansu-darwin-arm64-${VERSION_NUM}.app.tar.gz" \
+            --arg da_x64 "${BASE_URL}/Yansu-darwin-x64-${VERSION_NUM}.app.tar.gz" \
+            --arg la_x64 "${BASE_URL}/Yansu-linux-x64-${VERSION_NUM}.gz" \
+            --arg la_arm64 "${BASE_URL}/Yansu-linux-arm64-${VERSION_NUM}.gz" \
+            --arg wa_x64 "${BASE_URL}/Yansu-windows-x64-${VERSION_NUM}.gz" \
+            --arg dld_mac_arm64 "${LATEST_URL}/Yansu-darwin-arm64-${VERSION_NUM}.dmg" \
+            --arg dld_mac_x64 "${LATEST_URL}/Yansu-darwin-x64-${VERSION_NUM}.dmg" \
+            --arg dld_linux_x64 "${LATEST_URL}/Yansu-linux-x64-${VERSION_NUM}.tar.gz" \
+            --arg dld_linux_arm64 "${LATEST_URL}/Yansu-linux-arm64-${VERSION_NUM}.tar.gz" \
+            --arg dld_windows_x64 "${LATEST_URL}/Yansu-windows-x64-${VERSION_NUM}.zip" \
             --arg cs_da_arm64 "$cs_da_arm64" \
             --arg cs_da_x64 "$cs_da_x64" \
             --arg cs_la_x64 "$cs_la_x64" \
