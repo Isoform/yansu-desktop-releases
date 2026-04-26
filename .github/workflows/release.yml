@@ -1,13 +1,6 @@
 name: Release Yansu Desktop
 
 on:
-  schedule:
-    # 8:30 AM UTC+8 (CST)
-    - cron: '30 0 * * *'
-    # 3:30 PM UTC+8 (CST)
-    - cron: '30 7 * * *'
-    # 9:30 PM UTC+8 (CST)
-    - cron: '30 13 * * *'
   repository_dispatch:
     types: [release]
   workflow_dispatch:
