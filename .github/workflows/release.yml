@@ -622,14 +622,19 @@ jobs:
       - name: Prepare files for R2
         run: |
           VERSION_NUM="${{ needs.resolve-version.outputs.version_num }}"
-          mkdir -p r2-upload
-          find artifacts -type f \( -name "*.gz" -o -name "*.app.tar.gz" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} r2-upload/ \;
 
-          # Rename to versioned-suffix names. Both releases/<version>/ and latest/
-          # mirrors will only contain versioned filenames; consumers resolve them
-          # at runtime (marketing site via product-website PR Isoform/something#1608,
-          # auto-updater via wails-gui/version.go::platformAssetName).
-          cd r2-upload
+          # Two prepare directories with different contents:
+          #   r2-upload/         → versioned filenames only (uploaded to releases/<version>/)
+          #   r2-upload-latest/  → BOTH unversioned canonical AND versioned twin filenames
+          #                        (uploaded to latest/, so stable fallback URLs like
+          #                        release.yansu.app/latest/Yansu-darwin-arm64.dmg keep
+          #                        working forever for no-JS / llms.txt consumers, while
+          #                        versioned twins remain available for auto-update etc.)
+          mkdir -p r2-upload r2-upload-latest
+          find artifacts -type f \( -name "*.gz" -o -name "*.app.tar.gz" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} r2-upload-latest/ \;
+
+          # In r2-upload-latest/: keep the unversioned originals AND add versioned copies.
+          cd r2-upload-latest
           for f in Yansu-*; do
             case "$f" in
               *.app.tar.gz) base="${f%.app.tar.gz}"; ext="app.tar.gz" ;;
@@ -639,13 +644,21 @@ jobs:
               *.gz)         base="${f%.gz}";         ext="gz" ;;
               *) continue ;;
             esac
+            # Skip already-versioned filenames (idempotent)
             case "$base" in
               *-"$VERSION_NUM") continue ;;
             esac
-            mv "$f" "${base}-${VERSION_NUM}.${ext}"
+            cp "$f" "${base}-${VERSION_NUM}.${ext}"
           done
           cd ..
-          echo "=== Files prepared for R2 ===" && ls -lh r2-upload/
+
+          # In r2-upload/: only the versioned filenames (archival, immutable).
+          for f in r2-upload-latest/Yansu-*-"${VERSION_NUM}".*; do
+            cp "$f" r2-upload/
+          done
+
+          echo "=== Files prepared for releases/<version>/ (versioned only) ===" && ls -lh r2-upload/
+          echo "=== Files prepared for latest/ (versioned + unversioned) ===" && ls -lh r2-upload-latest/
 
       - name: Generate version.json manifest
         env:
@@ -679,11 +692,11 @@ jobs:
             --arg la_x64 "${BASE_URL}/Yansu-linux-x64-${VERSION_NUM}.gz" \
             --arg la_arm64 "${BASE_URL}/Yansu-linux-arm64-${VERSION_NUM}.gz" \
             --arg wa_x64 "${BASE_URL}/Yansu-windows-x64-${VERSION_NUM}.gz" \
-            --arg dld_mac_arm64 "${LATEST_URL}/Yansu-darwin-arm64-${VERSION_NUM}.dmg" \
-            --arg dld_mac_x64 "${LATEST_URL}/Yansu-darwin-x64-${VERSION_NUM}.dmg" \
-            --arg dld_linux_x64 "${LATEST_URL}/Yansu-linux-x64-${VERSION_NUM}.tar.gz" \
-            --arg dld_linux_arm64 "${LATEST_URL}/Yansu-linux-arm64-${VERSION_NUM}.tar.gz" \
-            --arg dld_windows_x64 "${LATEST_URL}/Yansu-windows-x64-${VERSION_NUM}.zip" \
+            --arg dld_mac_arm64 "${LATEST_URL}/Yansu-darwin-arm64.dmg" \
+            --arg dld_mac_x64 "${LATEST_URL}/Yansu-darwin-x64.dmg" \
+            --arg dld_linux_x64 "${LATEST_URL}/Yansu-linux-x64.tar.gz" \
+            --arg dld_linux_arm64 "${LATEST_URL}/Yansu-linux-arm64.tar.gz" \
+            --arg dld_windows_x64 "${LATEST_URL}/Yansu-windows-x64.zip" \
             --arg cs_da_arm64 "$cs_da_arm64" \
             --arg cs_da_x64 "$cs_da_x64" \
             --arg cs_la_x64 "$cs_la_x64" \
@@ -748,13 +761,12 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          aws s3 cp r2-upload/ "s3://${R2_BUCKET}/latest/" \
+          aws s3 cp r2-upload-latest/ "s3://${R2_BUCKET}/latest/" \
             --recursive \
             --endpoint-url "${R2_ENDPOINT}" \
-            --region auto \
-            --exclude "version.json"
+            --region auto
 
-          echo "Updated latest/ with latest release files"
+          echo "Updated latest/ with both unversioned canonical and versioned twin filenames"
 
       - name: Update latest version.json
         env:
