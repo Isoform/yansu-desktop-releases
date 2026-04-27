@@ -299,23 +299,17 @@ jobs:
           fi
           bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
-      - name: Rename DMG with arch suffix
+      # build-wails.sh now produces versioned filenames directly:
+      #   Yansu-<version>-darwin-<arch>.dmg
+      #   Yansu-<version>-darwin-<arch>.app.tar.gz
+      # Only the legacy .gz needs to be packaged here.
+      - name: Package — .gz (legacy bare binary)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
+        env:
+          VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
         run: |
-          mv "${{ env.APP_NAME }}.dmg" "${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.dmg"
-          echo "DMG: $(du -sh ${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.dmg | cut -f1)"
-
-      - name: Package — .app.tar.gz (auto-update) + .gz (legacy)
-        working-directory: source/${{ env.SOURCE_PATH }}/build/bin
-        run: |
-          # .app.tar.gz: full signed+notarized bundle for self-update (preserves codesign)
-          APP_TAR="${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.app.tar.gz"
-          tar -czf "$APP_TAR" "${{ env.APP_NAME }}.app"
-          echo "APP_TAR: $(du -sh $APP_TAR | cut -f1)"
-
-          # .gz: bare binary (legacy, kept for older clients)
           BINARY="${{ env.APP_NAME }}.app/Contents/MacOS/${{ env.APP_NAME }}"
-          GZ="${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.gz"
+          GZ="${{ env.APP_NAME }}-${VERSION_NUM}-darwin-${{ matrix.display_arch }}.gz"
           gzip -c "$BINARY" > "$GZ"
           echo "GZ: $(du -sh $GZ | cut -f1)"
 
@@ -324,9 +318,9 @@ jobs:
         with:
           name: ${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.dmg
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.app.tar.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.dmg
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.app.tar.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.gz
 
   build-linux:
     name: Build Linux (${{ matrix.display_arch }})
@@ -408,20 +402,21 @@ jobs:
 
       - name: Package — .tar.gz (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
+        env:
+          VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
         run: |
-          TAR="${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.tar.gz"
-          tar czf "$TAR" "${{ env.APP_NAME }}" bun-bundle ffmpeg-bundle git-bundle rtk-bundle whisper-bundle yansu-cli-bundle
-          GZ="${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.gz"
-          gzip -c "${{ env.APP_NAME }}" > "$GZ"
-          echo "TAR: $(du -sh $TAR | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
+          STEM="${{ env.APP_NAME }}-${VERSION_NUM}-linux-${{ matrix.display_arch }}"
+          tar czf "${STEM}.tar.gz" "${{ env.APP_NAME }}" bun-bundle ffmpeg-bundle git-bundle rtk-bundle whisper-bundle yansu-cli-bundle
+          gzip -c "${{ env.APP_NAME }}" > "${STEM}.gz"
+          echo "TAR: $(du -sh ${STEM}.tar.gz | cut -f1) | GZ: $(du -sh ${STEM}.gz | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.tar.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-linux-${{ matrix.display_arch }}.tar.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-linux-${{ matrix.display_arch }}.gz
 
   build-windows:
     name: Build Windows (x64)
@@ -488,20 +483,21 @@ jobs:
       - name: Package — .zip (full install) + .gz (auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         shell: bash
+        env:
+          VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
         run: |
-          ZIP="${{ env.APP_NAME }}-windows-x64.zip"
-          GZ="${{ env.APP_NAME }}-windows-x64.gz"
-          7z a -mx9 "$ZIP" "${{ env.APP_NAME }}.exe" bun-bundle ffmpeg-bundle git-bundle rtk-bundle whisper-bundle yansu-cli-bundle
-          gzip -c "${{ env.APP_NAME }}.exe" > "$GZ"
-          echo "ZIP: $(du -sh $ZIP | cut -f1) | GZ: $(du -sh $GZ | cut -f1)"
+          STEM="${{ env.APP_NAME }}-${VERSION_NUM}-windows-x64"
+          7z a -mx9 "${STEM}.zip" "${{ env.APP_NAME }}.exe" bun-bundle ffmpeg-bundle git-bundle rtk-bundle whisper-bundle yansu-cli-bundle
+          gzip -c "${{ env.APP_NAME }}.exe" > "${STEM}.gz"
+          echo "ZIP: $(du -sh ${STEM}.zip | cut -f1) | GZ: $(du -sh ${STEM}.gz | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-windows-x64
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-x64.zip
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-windows-x64.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-windows-x64.zip
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-windows-x64.gz
 
   release:
     name: Create Release
@@ -608,28 +604,29 @@ jobs:
             NOTES="$CHANGELOG_FROM_JOB"
           fi
 
-          LATEST_URL="${R2_PUBLIC_URL}/latest"
+          # All artifacts are versioned: Yansu-<version_num>-<platform>.<ext>
+          STEM="Yansu-${VERSION_NUM}"
 
           # Compute SHA-256 checksums for auto-update assets.
-          cs_da_arm64=$(sha256sum r2-upload/Yansu-darwin-arm64.app.tar.gz | cut -d' ' -f1)
-          cs_da_x64=$(sha256sum r2-upload/Yansu-darwin-x64.app.tar.gz | cut -d' ' -f1)
-          cs_la_x64=$(sha256sum r2-upload/Yansu-linux-x64.gz | cut -d' ' -f1)
-          cs_la_arm64=$(sha256sum r2-upload/Yansu-linux-arm64.gz | cut -d' ' -f1)
-          cs_wa_x64=$(sha256sum r2-upload/Yansu-windows-x64.gz | cut -d' ' -f1)
+          cs_da_arm64=$(sha256sum "r2-upload/${STEM}-darwin-arm64.app.tar.gz" | cut -d' ' -f1)
+          cs_da_x64=$(sha256sum "r2-upload/${STEM}-darwin-x64.app.tar.gz" | cut -d' ' -f1)
+          cs_la_x64=$(sha256sum "r2-upload/${STEM}-linux-x64.gz" | cut -d' ' -f1)
+          cs_la_arm64=$(sha256sum "r2-upload/${STEM}-linux-arm64.gz" | cut -d' ' -f1)
+          cs_wa_x64=$(sha256sum "r2-upload/${STEM}-windows-x64.gz" | cut -d' ' -f1)
 
           jq -n \
             --arg ver "$VERSION_NUM" \
             --arg notes "$NOTES" \
-            --arg da_arm64 "${BASE_URL}/Yansu-darwin-arm64.app.tar.gz" \
-            --arg da_x64 "${BASE_URL}/Yansu-darwin-x64.app.tar.gz" \
-            --arg la_x64 "${BASE_URL}/Yansu-linux-x64.gz" \
-            --arg la_arm64 "${BASE_URL}/Yansu-linux-arm64.gz" \
-            --arg wa_x64 "${BASE_URL}/Yansu-windows-x64.gz" \
-            --arg dld_mac_arm64 "${LATEST_URL}/Yansu-darwin-arm64.dmg" \
-            --arg dld_mac_x64 "${LATEST_URL}/Yansu-darwin-x64.dmg" \
-            --arg dld_linux_x64 "${LATEST_URL}/Yansu-linux-x64.tar.gz" \
-            --arg dld_linux_arm64 "${LATEST_URL}/Yansu-linux-arm64.tar.gz" \
-            --arg dld_windows_x64 "${LATEST_URL}/Yansu-windows-x64.zip" \
+            --arg da_arm64 "${BASE_URL}/${STEM}-darwin-arm64.app.tar.gz" \
+            --arg da_x64 "${BASE_URL}/${STEM}-darwin-x64.app.tar.gz" \
+            --arg la_x64 "${BASE_URL}/${STEM}-linux-x64.gz" \
+            --arg la_arm64 "${BASE_URL}/${STEM}-linux-arm64.gz" \
+            --arg wa_x64 "${BASE_URL}/${STEM}-windows-x64.gz" \
+            --arg dld_mac_arm64 "${BASE_URL}/${STEM}-darwin-arm64.dmg" \
+            --arg dld_mac_x64 "${BASE_URL}/${STEM}-darwin-x64.dmg" \
+            --arg dld_linux_x64 "${BASE_URL}/${STEM}-linux-x64.tar.gz" \
+            --arg dld_linux_arm64 "${BASE_URL}/${STEM}-linux-arm64.tar.gz" \
+            --arg dld_windows_x64 "${BASE_URL}/${STEM}-windows-x64.zip" \
             --arg cs_da_arm64 "$cs_da_arm64" \
             --arg cs_da_x64 "$cs_da_x64" \
             --arg cs_la_x64 "$cs_la_x64" \
@@ -687,20 +684,9 @@ jobs:
 
           echo "Uploaded release ${VERSION} to R2"
 
-      - name: Upload latest files to R2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: |
-          aws s3 cp r2-upload/ "s3://${R2_BUCKET}/latest/" \
-            --recursive \
-            --endpoint-url "${R2_ENDPOINT}" \
-            --region auto \
-            --exclude "version.json"
-
-          echo "Updated latest/ with latest release files"
+      # Note: /latest/* paths are handled by the release-redirect Cloudflare
+      # Worker, which reads version.json and 302-redirects to the versioned
+      # URL under /releases/<version>/. No /latest/ copies are uploaded here.
 
       - name: Update latest version.json
         env:
