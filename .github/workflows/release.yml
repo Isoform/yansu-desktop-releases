@@ -406,7 +406,12 @@ jobs:
           VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
         run: |
           STEM="${{ env.APP_NAME }}-${VERSION_NUM}-linux-${{ matrix.display_arch }}"
-          tar czf "${STEM}.tar.gz" "${{ env.APP_NAME }}" bun-bundle ffmpeg-bundle git-bundle rtk-bundle whisper-bundle yansu-cli-bundle
+          # whisper-bundle was removed when whisper.cpp was replaced by
+          # sherpa-onnx. Linux is currently not a supported sherpa target
+          # (asr_sherpa_other.go stub), so no native libs are bundled here;
+          # voice input is unavailable on Linux until a sherpa-onnx Linux
+          # build is wired up in a follow-up.
+          tar czf "${STEM}.tar.gz" "${{ env.APP_NAME }}" bun-bundle ffmpeg-bundle git-bundle rtk-bundle yansu-cli-bundle
           gzip -c "${{ env.APP_NAME }}" > "${STEM}.gz"
           echo "TAR: $(du -sh ${STEM}.tar.gz | cut -f1) | GZ: $(du -sh ${STEM}.gz | cut -f1)"
 
@@ -449,6 +454,21 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install mingw-w64 toolchain
+        # sherpa-onnx-go-windows ships cgo bindings; build-wails.sh's
+        # --platform windows/amd64 path requires a mingw-w64 toolchain on
+        # PATH (specifically x86_64-w64-mingw32-gcc). The windows-latest
+        # runner has MSYS2 but its mingw64 binaries aren't on PATH by
+        # default — Chocolatey's mingw package installs them and adds the
+        # standard install directory to PATH for subsequent steps.
+        shell: pwsh
+        run: |
+          choco install mingw -y --no-progress
+          # Make x86_64-w64-mingw32-gcc resolvable from PATH for subsequent
+          # bash steps. Chocolatey installs to C:\ProgramData\mingw64\mingw64\bin.
+          echo "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          x86_64-w64-mingw32-gcc --version
+
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
@@ -487,7 +507,13 @@ jobs:
           VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
         run: |
           STEM="${{ env.APP_NAME }}-${VERSION_NUM}-windows-x64"
-          7z a -mx9 "${STEM}.zip" "${{ env.APP_NAME }}.exe" bun-bundle ffmpeg-bundle git-bundle rtk-bundle whisper-bundle yansu-cli-bundle
+          # whisper-bundle was removed when whisper.cpp was replaced by
+          # sherpa-onnx (in-process via cgo). The three sherpa-onnx native
+          # DLLs must ship next to Yansu.exe so the Windows loader resolves
+          # them via the executable directory.
+          7z a -mx9 "${STEM}.zip" "${{ env.APP_NAME }}.exe" \
+            sherpa-onnx-c-api.dll sherpa-onnx-cxx-api.dll onnxruntime.dll \
+            bun-bundle ffmpeg-bundle git-bundle rtk-bundle yansu-cli-bundle
           gzip -c "${{ env.APP_NAME }}.exe" > "${STEM}.gz"
           echo "ZIP: $(du -sh ${STEM}.zip | cut -f1) | GZ: $(du -sh ${STEM}.gz | cut -f1)"
 
