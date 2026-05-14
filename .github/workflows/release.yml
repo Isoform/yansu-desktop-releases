@@ -400,20 +400,45 @@ jobs:
           fi
           bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
-      - name: Package — .tar.gz (full install) + .gz (auto-update)
+      - name: Package — .tar.gz (full install + auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         env:
           VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
         run: |
           STEM="${{ env.APP_NAME }}-${VERSION_NUM}-linux-${{ matrix.display_arch }}"
+          # Pre-flight: fail loudly if any required sibling is missing.
+          # quick-chat-spotlight previously fell off the package list and
+          # CI did not notice because tar silently skips missing files
+          # under some shells; explicit existence checks catch it.
           # whisper-bundle was removed when whisper.cpp was replaced by
           # sherpa-onnx. Linux is currently not a supported sherpa target
           # (asr_sherpa_other.go stub), so no native libs are bundled here;
           # voice input is unavailable on Linux until a sherpa-onnx Linux
           # build is wired up in a follow-up.
-          tar czf "${STEM}.tar.gz" "${{ env.APP_NAME }}" bun-bundle ffmpeg-bundle git-bundle rtk-bundle yansu-cli-bundle
-          gzip -c "${{ env.APP_NAME }}" > "${STEM}.gz"
-          echo "TAR: $(du -sh ${STEM}.tar.gz | cut -f1) | GZ: $(du -sh ${STEM}.gz | cut -f1)"
+          REQUIRED=(
+            "${{ env.APP_NAME }}"
+            quick-chat-spotlight
+            bun-bundle
+            ffmpeg-bundle
+            git-bundle
+            rtk-bundle
+            yansu-cli-bundle
+          )
+          for f in "${REQUIRED[@]}"; do
+            if [ ! -e "$f" ]; then
+              echo "ERROR: required artifact missing before packaging: $f" >&2
+              ls -la
+              exit 1
+            fi
+          done
+
+          # Single .tar.gz serves both first-install download and self-update
+          # (see wails-gui/version.go installArchive). The bare-binary .gz
+          # format used previously could not carry the quick-chat-spotlight
+          # helper and would silently break the moment Linux gains any
+          # native dependency (sherpa-onnx Linux build is on the roadmap).
+          tar czf "${STEM}.tar.gz" "${REQUIRED[@]}"
+          echo "TAR: $(du -sh ${STEM}.tar.gz | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -421,7 +446,6 @@ jobs:
           name: ${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}
           path: |
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-linux-${{ matrix.display_arch }}.tar.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-linux-${{ matrix.display_arch }}.gz
 
   build-windows:
     name: Build Windows (x64)
@@ -500,22 +524,47 @@ jobs:
           fi
           bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
-      - name: Package — .zip (full install) + .gz (auto-update)
+      - name: Package — .zip (full install + auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         shell: bash
         env:
           VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
         run: |
           STEM="${{ env.APP_NAME }}-${VERSION_NUM}-windows-x64"
-          # whisper-bundle was removed when whisper.cpp was replaced by
-          # sherpa-onnx (in-process via cgo). The three sherpa-onnx native
-          # DLLs must ship next to Yansu.exe so the Windows loader resolves
-          # them via the executable directory.
-          7z a -mx9 "${STEM}.zip" "${{ env.APP_NAME }}.exe" \
-            sherpa-onnx-c-api.dll sherpa-onnx-cxx-api.dll onnxruntime.dll \
-            bun-bundle ffmpeg-bundle git-bundle rtk-bundle yansu-cli-bundle
-          gzip -c "${{ env.APP_NAME }}.exe" > "${STEM}.gz"
-          echo "ZIP: $(du -sh ${STEM}.zip | cut -f1) | GZ: $(du -sh ${STEM}.gz | cut -f1)"
+          # Pre-flight: fail loudly if any required sibling is missing. The
+          # build script's bundle_sherpa_dlls_windows() soft-fails (return 0
+          # with just a warning) when it can't find the sherpa-onnx-go module
+          # lib dir, which previously let CI ship a broken zip silently.
+          REQUIRED=(
+            "${{ env.APP_NAME }}.exe"
+            quick-chat-spotlight.exe
+            sherpa-onnx-c-api.dll
+            sherpa-onnx-cxx-api.dll
+            onnxruntime.dll
+            bun-bundle
+            ffmpeg-bundle
+            git-bundle
+            rtk-bundle
+            yansu-cli-bundle
+          )
+          for f in "${REQUIRED[@]}"; do
+            if [ ! -e "$f" ]; then
+              echo "ERROR: required artifact missing before packaging: $f" >&2
+              ls -la
+              exit 1
+            fi
+          done
+
+          # Single .zip serves both first-install download and self-update —
+          # the Windows app uses an in-process zip extractor + per-file
+          # atomic-rename to apply updates (see wails-gui/version.go
+          # installArchive). The bare-exe .gz format used previously could
+          # not carry the sherpa-onnx DLLs and the quick-chat-spotlight
+          # helper, so any self-update across a sherpa version bump or onto
+          # a host that had ever lost its sibling files would fail with
+          # "DLL not found".
+          7z a -mx9 "${STEM}.zip" "${REQUIRED[@]}"
+          echo "ZIP: $(du -sh ${STEM}.zip | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -523,12 +572,11 @@ jobs:
           name: ${{ env.APP_NAME }}-windows-x64
           path: |
             source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-windows-x64.zip
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-windows-x64.gz
 
   release:
     name: Create Release
     needs: [resolve-version, generate-changelog, build-macos, build-linux, build-windows]
-    if: ${{ !cancelled() && needs.build-macos.result == 'success' && needs.build-linux.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-macos.result == 'success' && needs.build-linux.result == 'success' && needs.build-windows.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -634,20 +682,24 @@ jobs:
           STEM="Yansu-${VERSION_NUM}"
 
           # Compute SHA-256 checksums for auto-update assets.
+          # Linux/Windows now use the same multi-file archive (.tar.gz /
+          # .zip) for both first-install and self-update — the previous
+          # bare-binary .gz path was structurally incomplete (couldn't
+          # carry sherpa DLLs / quick-chat-spotlight helper).
           cs_da_arm64=$(sha256sum "r2-upload/${STEM}-darwin-arm64.app.tar.gz" | cut -d' ' -f1)
           cs_da_x64=$(sha256sum "r2-upload/${STEM}-darwin-x64.app.tar.gz" | cut -d' ' -f1)
-          cs_la_x64=$(sha256sum "r2-upload/${STEM}-linux-x64.gz" | cut -d' ' -f1)
-          cs_la_arm64=$(sha256sum "r2-upload/${STEM}-linux-arm64.gz" | cut -d' ' -f1)
-          cs_wa_x64=$(sha256sum "r2-upload/${STEM}-windows-x64.gz" | cut -d' ' -f1)
+          cs_la_x64=$(sha256sum "r2-upload/${STEM}-linux-x64.tar.gz" | cut -d' ' -f1)
+          cs_la_arm64=$(sha256sum "r2-upload/${STEM}-linux-arm64.tar.gz" | cut -d' ' -f1)
+          cs_wa_x64=$(sha256sum "r2-upload/${STEM}-windows-x64.zip" | cut -d' ' -f1)
 
           jq -n \
             --arg ver "$VERSION_NUM" \
             --arg notes "$NOTES" \
             --arg da_arm64 "${BASE_URL}/${STEM}-darwin-arm64.app.tar.gz" \
             --arg da_x64 "${BASE_URL}/${STEM}-darwin-x64.app.tar.gz" \
-            --arg la_x64 "${BASE_URL}/${STEM}-linux-x64.gz" \
-            --arg la_arm64 "${BASE_URL}/${STEM}-linux-arm64.gz" \
-            --arg wa_x64 "${BASE_URL}/${STEM}-windows-x64.gz" \
+            --arg la_x64 "${BASE_URL}/${STEM}-linux-x64.tar.gz" \
+            --arg la_arm64 "${BASE_URL}/${STEM}-linux-arm64.tar.gz" \
+            --arg wa_x64 "${BASE_URL}/${STEM}-windows-x64.zip" \
             --arg dld_mac_arm64 "${BASE_URL}/${STEM}-darwin-arm64.dmg" \
             --arg dld_mac_x64 "${BASE_URL}/${STEM}-darwin-x64.dmg" \
             --arg dld_linux_x64 "${BASE_URL}/${STEM}-linux-x64.tar.gz" \
