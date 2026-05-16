@@ -622,8 +622,6 @@ jobs:
 
           {
             echo "BODY<<EOF"
-            echo "## Yansu Desktop ${{ needs.resolve-version.outputs.version }}"
-            echo ""
             echo "$NOTES"
             echo ""
             echo "<!-- source-commit: ${SOURCE_COMMIT} -->"
