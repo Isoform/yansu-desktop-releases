@@ -421,7 +421,6 @@ jobs:
             bun-bundle
             ffmpeg-bundle
             git-bundle
-            rtk-bundle
             yansu-cli-bundle
           )
           for f in "${REQUIRED[@]}"; do
@@ -544,7 +543,6 @@ jobs:
             bun-bundle
             ffmpeg-bundle
             git-bundle
-            rtk-bundle
             yansu-cli-bundle
           )
           for f in "${REQUIRED[@]}"; do
