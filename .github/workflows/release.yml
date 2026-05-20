@@ -291,10 +291,12 @@ jobs:
           # Baked into the Go binary via -ldflags by build-wails.sh so the
           # wails-gui Telemetry hook (telemetry.go) has PostHog credentials
           # on user machines without needing any runtime env. Reuses the
-          # same prod project key the frontend already ships with — these
-          # are write-only Project API Keys, safe on any client.
-          YANSU_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
-          YANSU_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # same desktop prod project key the frontend already ships with —
+          # these are write-only Project API Keys, safe on any client. The
+          # DESKTOP_ prefix matches the renamed env names in
+          # Isoform/something (PR #1806) so the two repos stay in sync.
+          YANSU_DESKTOP_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          YANSU_DESKTOP_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
         run: |
           BUILD_ARGS=(
             --platform darwin/${{ matrix.arch }}
@@ -400,10 +402,12 @@ jobs:
           # Baked into the Go binary via -ldflags by build-wails.sh so the
           # wails-gui Telemetry hook (telemetry.go) has PostHog credentials
           # on user machines without needing any runtime env. Reuses the
-          # same prod project key the frontend already ships with — these
-          # are write-only Project API Keys, safe on any client.
-          YANSU_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
-          YANSU_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # same desktop prod project key the frontend already ships with —
+          # these are write-only Project API Keys, safe on any client. The
+          # DESKTOP_ prefix matches the renamed env names in
+          # Isoform/something (PR #1806) so the two repos stay in sync.
+          YANSU_DESKTOP_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          YANSU_DESKTOP_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
         run: |
           BUILD_ARGS=(
             --platform linux/${{ matrix.arch }}
@@ -529,10 +533,12 @@ jobs:
           # Baked into the Go binary via -ldflags by build-wails.sh so the
           # wails-gui Telemetry hook (telemetry.go) has PostHog credentials
           # on user machines without needing any runtime env. Reuses the
-          # same prod project key the frontend already ships with — these
-          # are write-only Project API Keys, safe on any client.
-          YANSU_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
-          YANSU_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # same desktop prod project key the frontend already ships with —
+          # these are write-only Project API Keys, safe on any client. The
+          # DESKTOP_ prefix matches the renamed env names in
+          # Isoform/something (PR #1806) so the two repos stay in sync.
+          YANSU_DESKTOP_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          YANSU_DESKTOP_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
         shell: bash
         run: |
           BUILD_ARGS=(
