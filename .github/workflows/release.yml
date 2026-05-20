@@ -288,6 +288,13 @@ jobs:
           VITE_PUBLIC_POSTHOG_STAGING_HOST: ${{ secrets.POSTHOG_STAGING_HOST }}
           VITE_PUBLIC_POSTHOG_PROD_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
           VITE_PUBLIC_POSTHOG_PROD_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # Baked into the Go binary via -ldflags by build-wails.sh so the
+          # wails-gui Telemetry hook (telemetry.go) has PostHog credentials
+          # on user machines without needing any runtime env. Reuses the
+          # same prod project key the frontend already ships with — these
+          # are write-only Project API Keys, safe on any client.
+          YANSU_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          YANSU_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
         run: |
           BUILD_ARGS=(
             --platform darwin/${{ matrix.arch }}
@@ -390,6 +397,13 @@ jobs:
           VITE_PUBLIC_POSTHOG_STAGING_HOST: ${{ secrets.POSTHOG_STAGING_HOST }}
           VITE_PUBLIC_POSTHOG_PROD_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
           VITE_PUBLIC_POSTHOG_PROD_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # Baked into the Go binary via -ldflags by build-wails.sh so the
+          # wails-gui Telemetry hook (telemetry.go) has PostHog credentials
+          # on user machines without needing any runtime env. Reuses the
+          # same prod project key the frontend already ships with — these
+          # are write-only Project API Keys, safe on any client.
+          YANSU_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          YANSU_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
         run: |
           BUILD_ARGS=(
             --platform linux/${{ matrix.arch }}
@@ -512,6 +526,13 @@ jobs:
           VITE_PUBLIC_POSTHOG_STAGING_HOST: ${{ secrets.POSTHOG_STAGING_HOST }}
           VITE_PUBLIC_POSTHOG_PROD_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
           VITE_PUBLIC_POSTHOG_PROD_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # Baked into the Go binary via -ldflags by build-wails.sh so the
+          # wails-gui Telemetry hook (telemetry.go) has PostHog credentials
+          # on user machines without needing any runtime env. Reuses the
+          # same prod project key the frontend already ships with — these
+          # are write-only Project API Keys, safe on any client.
+          YANSU_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
+          YANSU_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
         shell: bash
         run: |
           BUILD_ARGS=(
