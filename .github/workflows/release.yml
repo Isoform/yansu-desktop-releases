@@ -571,6 +571,7 @@ jobs:
             ffmpeg-bundle
             git-bundle
             yansu-cli-bundle
+            paddleocr
           )
           for f in "${REQUIRED[@]}"; do
             if [ ! -e "$f" ]; then
