@@ -364,7 +364,8 @@ jobs:
             pkg-config \
             imagemagick \
             libcap-dev \
-            libseccomp-dev
+            libseccomp-dev \
+            patchelf
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -429,13 +430,20 @@ jobs:
           # CI did not notice because tar silently skips missing files
           # under some shells; explicit existence checks catch it.
           # whisper-bundle was removed when whisper.cpp was replaced by
-          # sherpa-onnx. Linux is currently not a supported sherpa target
-          # (asr_sherpa_other.go stub), so no native libs are bundled here;
-          # voice input is unavailable on Linux until a sherpa-onnx Linux
-          # build is wired up in a follow-up.
+          # sherpa-onnx. ASR (asr_sherpa_other.go) is still stubbed on Linux,
+          # but the Yansu binary nonetheless links libsherpa-onnx-c-api.so on
+          # Linux via internal/speakerid (speaker embeddings for voice
+          # enrollment), which imports sherpa-onnx-go with no build constraint.
+          # build-wails.sh's bundle_sherpa_libs_linux copies these .so files
+          # next to the binary and rewrites RUNPATH to $ORIGIN; they MUST be in
+          # the package or end users hit "libsherpa-onnx-c-api.so: cannot open
+          # shared object file" on launch.
           REQUIRED=(
             "${{ env.APP_NAME }}"
             quick-chat-spotlight
+            libsherpa-onnx-c-api.so
+            libsherpa-onnx-cxx-api.so
+            libonnxruntime.so
             bun-bundle
             ffmpeg-bundle
             git-bundle
