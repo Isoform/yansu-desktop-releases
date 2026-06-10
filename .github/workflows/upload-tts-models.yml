@@ -1,26 +1,22 @@
 name: Upload TTS Voice Models to R2
 
-# Manually uploads the two sherpa TTS voice-model tarballs to the model-assets
-# R2 bucket so the desktop app fetches them from the fast CDN
-# (model-assets.yansu.app) instead of falling back to the slow GitHub mirror.
+# Uploads the two sherpa TTS voice-model tarballs into the existing release R2
+# bucket (secrets.R2_BUCKET) under sherpa/tts/, so the desktop app can fetch
+# them from the fast CDN (release.yansu.app) instead of the slow GitHub mirror.
 #
-# Run it twice:
-#   1. First with an empty "bucket" input: the job only runs `aws s3 ls` to list
-#      the buckets this R2 token can see — this confirms whether the token is
-#      account-scoped and reveals the model-assets bucket's real name.
-#   2. Re-run with "bucket" set to that name to download, SHA-verify, and upload.
+# Safe by construction:
+#   - writes ONLY to the new sherpa/tts/ prefix, disjoint from releases/ and
+#     version.json that the release pipeline manages (cp-only, never deletes);
+#   - refuses to overwrite an object that already exists;
+#   - verifies SHA-256 of each tarball before upload.
 #
-# This workflow never runs automatically; it is workflow_dispatch only.
+# workflow_dispatch only — never runs automatically.
 
 on:
   workflow_dispatch:
     inputs:
-      bucket:
-        description: 'model-assets R2 bucket name (leave empty for discovery / aws s3 ls only)'
-        required: false
-        default: ''
       prefix:
-        description: 'Key prefix (must match the app download URL path)'
+        description: 'Key prefix in the bucket (must match the app download URL path)'
         required: false
         default: 'sherpa/tts'
 
@@ -28,6 +24,9 @@ env:
   AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
   R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+  R2_BUCKET: ${{ secrets.R2_BUCKET }}
+  PREFIX: ${{ github.event.inputs.prefix || 'sherpa/tts' }}
+  PUBLIC_BASE: https://release.yansu.app
   # Stop aws-cli v2 from adding CRC checksums that R2 can reject on upload.
   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
@@ -36,18 +35,20 @@ jobs:
   upload-tts-models:
     runs-on: ubuntu-latest
     steps:
-      - name: List visible R2 buckets (token scope + discover bucket name)
+      - name: Refuse to overwrite — abort if target objects already exist
         run: |
-          echo "Buckets this R2 token can see:"
-          aws s3 ls --endpoint-url "${R2_ENDPOINT}" --region auto \
-            || echo "::warning::aws s3 ls failed — token may be scoped to a single bucket. You can still pass the bucket name directly, but it must be writable by this token."
-
-      - name: Discovery only (no bucket given)
-        if: ${{ inputs.bucket == '' }}
-        run: echo "No bucket input — discovery run complete. Re-run with the model-assets bucket name to upload."
+          set -euo pipefail
+          for f in vits-melo-tts-zh_en.tar.bz2 kokoro-en-v0_19.tar.bz2; do
+            key="${PREFIX}/$f"
+            out=$(aws s3 ls "s3://${R2_BUCKET}/${key}" --endpoint-url "${R2_ENDPOINT}" --region auto 2>/dev/null || true)
+            if [ -n "$out" ]; then
+              echo "::error::s3://${R2_BUCKET}/${key} already exists — aborting to avoid overwrite."
+              exit 1
+            fi
+            echo "OK: ${key} does not exist yet"
+          done
 
       - name: Download canonical tarballs and verify SHA-256
-        if: ${{ inputs.bucket != '' }}
         run: |
           set -euo pipefail
           mkdir -p models
@@ -63,12 +64,11 @@ jobs:
           done
           ls -lh models/
 
-      - name: Upload to model-assets R2 bucket
-        if: ${{ inputs.bucket != '' }}
+      - name: Upload to sherpa/tts/ in the release bucket
         run: |
           set -euo pipefail
           for f in vits-melo-tts-zh_en.tar.bz2 kokoro-en-v0_19.tar.bz2; do
-            dest="s3://${{ inputs.bucket }}/${{ inputs.prefix }}/$f"
+            dest="s3://${R2_BUCKET}/${PREFIX}/$f"
             echo "Uploading $f -> $dest"
             aws s3 cp "models/$f" "$dest" \
               --endpoint-url "${R2_ENDPOINT}" --region auto \
@@ -76,13 +76,12 @@ jobs:
           done
 
       - name: Verify public CDN access + served SHA
-        if: ${{ inputs.bucket != '' }}
         run: |
           set -euo pipefail
           for f in vits-melo-tts-zh_en.tar.bz2 kokoro-en-v0_19.tar.bz2; do
-            url="https://model-assets.yansu.app/${{ inputs.prefix }}/$f"
+            url="${PUBLIC_BASE}/${PREFIX}/$f"
             echo "HEAD $url"; curl -sfI "$url" | head -5
           done
           echo "melo served SHA:"
-          curl -sfL "https://model-assets.yansu.app/${{ inputs.prefix }}/vits-melo-tts-zh_en.tar.bz2" | sha256sum
+          curl -sfL "${PUBLIC_BASE}/${PREFIX}/vits-melo-tts-zh_en.tar.bz2" | sha256sum
           echo "expected:        e58351ed7149f290a54534538badd4077cdbe6fddc964b24d0bee870415d1514"
