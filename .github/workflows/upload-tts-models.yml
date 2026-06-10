@@ -1,0 +1,88 @@
+name: Upload TTS Voice Models to R2
+
+# Manually uploads the two sherpa TTS voice-model tarballs to the model-assets
+# R2 bucket so the desktop app fetches them from the fast CDN
+# (model-assets.yansu.app) instead of falling back to the slow GitHub mirror.
+#
+# Run it twice:
+#   1. First with an empty "bucket" input: the job only runs `aws s3 ls` to list
+#      the buckets this R2 token can see — this confirms whether the token is
+#      account-scoped and reveals the model-assets bucket's real name.
+#   2. Re-run with "bucket" set to that name to download, SHA-verify, and upload.
+#
+# This workflow never runs automatically; it is workflow_dispatch only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: 'model-assets R2 bucket name (leave empty for discovery / aws s3 ls only)'
+        required: false
+        default: ''
+      prefix:
+        description: 'Key prefix (must match the app download URL path)'
+        required: false
+        default: 'sherpa/tts'
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+  # Stop aws-cli v2 from adding CRC checksums that R2 can reject on upload.
+  AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+  AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+
+jobs:
+  upload-tts-models:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List visible R2 buckets (token scope + discover bucket name)
+        run: |
+          echo "Buckets this R2 token can see:"
+          aws s3 ls --endpoint-url "${R2_ENDPOINT}" --region auto \
+            || echo "::warning::aws s3 ls failed — token may be scoped to a single bucket. You can still pass the bucket name directly, but it must be writable by this token."
+
+      - name: Discovery only (no bucket given)
+        if: ${{ inputs.bucket == '' }}
+        run: echo "No bucket input — discovery run complete. Re-run with the model-assets bucket name to upload."
+
+      - name: Download canonical tarballs and verify SHA-256
+        if: ${{ inputs.bucket != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          BASE=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models
+          declare -A SHA=(
+            [vits-melo-tts-zh_en.tar.bz2]=e58351ed7149f290a54534538badd4077cdbe6fddc964b24d0bee870415d1514
+            [kokoro-en-v0_19.tar.bz2]=912804855a04745fa77a30be545b3f9a5d15c4d66db00b88cbcd4921df605ac7
+          )
+          for f in "${!SHA[@]}"; do
+            echo "Downloading $f ..."
+            curl -fL --retry 3 -o "models/$f" "$BASE/$f"
+            echo "${SHA[$f]}  models/$f" | sha256sum -c -
+          done
+          ls -lh models/
+
+      - name: Upload to model-assets R2 bucket
+        if: ${{ inputs.bucket != '' }}
+        run: |
+          set -euo pipefail
+          for f in vits-melo-tts-zh_en.tar.bz2 kokoro-en-v0_19.tar.bz2; do
+            dest="s3://${{ inputs.bucket }}/${{ inputs.prefix }}/$f"
+            echo "Uploading $f -> $dest"
+            aws s3 cp "models/$f" "$dest" \
+              --endpoint-url "${R2_ENDPOINT}" --region auto \
+              --content-type application/x-bzip2
+          done
+
+      - name: Verify public CDN access + served SHA
+        if: ${{ inputs.bucket != '' }}
+        run: |
+          set -euo pipefail
+          for f in vits-melo-tts-zh_en.tar.bz2 kokoro-en-v0_19.tar.bz2; do
+            url="https://model-assets.yansu.app/${{ inputs.prefix }}/$f"
+            echo "HEAD $url"; curl -sfI "$url" | head -5
+          done
+          echo "melo served SHA:"
+          curl -sfL "https://model-assets.yansu.app/${{ inputs.prefix }}/vits-melo-tts-zh_en.tar.bz2" | sha256sum
+          echo "expected:        e58351ed7149f290a54534538badd4077cdbe6fddc964b24d0bee870415d1514"
