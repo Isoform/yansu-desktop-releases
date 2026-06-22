@@ -52,7 +52,13 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPO }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          ref: ${{ env.SOURCE_REF }}
+          # Build the exact source commit that triggered this release. The
+          # dispatcher (Isoform/something desktop-release.yml) sends the tagged
+          # commit as client_payload.source_ref; a manual workflow_dispatch has
+          # no payload and falls back to the SOURCE_REF branch (main). This keeps
+          # the released version/variant in lockstep with the source it was built
+          # from instead of always building main's HEAD.
+          ref: ${{ github.event.client_payload.source_ref || env.SOURCE_REF }}
           path: source
           fetch-depth: 0
 
@@ -249,7 +255,13 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPO }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          ref: ${{ env.SOURCE_REF }}
+          # Build the exact source commit that triggered this release. The
+          # dispatcher (Isoform/something desktop-release.yml) sends the tagged
+          # commit as client_payload.source_ref; a manual workflow_dispatch has
+          # no payload and falls back to the SOURCE_REF branch (main). This keeps
+          # the released version/variant in lockstep with the source it was built
+          # from instead of always building main's HEAD.
+          ref: ${{ github.event.client_payload.source_ref || env.SOURCE_REF }}
           path: source
 
       - name: Setup Go
@@ -392,7 +404,13 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPO }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          ref: ${{ env.SOURCE_REF }}
+          # Build the exact source commit that triggered this release. The
+          # dispatcher (Isoform/something desktop-release.yml) sends the tagged
+          # commit as client_payload.source_ref; a manual workflow_dispatch has
+          # no payload and falls back to the SOURCE_REF branch (main). This keeps
+          # the released version/variant in lockstep with the source it was built
+          # from instead of always building main's HEAD.
+          ref: ${{ github.event.client_payload.source_ref || env.SOURCE_REF }}
           path: source
 
       - name: Install Linux dependencies
@@ -533,7 +551,13 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPO }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          ref: ${{ env.SOURCE_REF }}
+          # Build the exact source commit that triggered this release. The
+          # dispatcher (Isoform/something desktop-release.yml) sends the tagged
+          # commit as client_payload.source_ref; a manual workflow_dispatch has
+          # no payload and falls back to the SOURCE_REF branch (main). This keeps
+          # the released version/variant in lockstep with the source it was built
+          # from instead of always building main's HEAD.
+          ref: ${{ github.event.client_payload.source_ref || env.SOURCE_REF }}
           path: source
 
       - name: Setup Go
