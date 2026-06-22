@@ -22,6 +22,14 @@ on:
         description: 'Release notes (markdown supported)'
         required: false
         default: 'Bug fixes and improvements.'
+      variant:
+        description: 'Build variant: standard (normal Yansu) or standalone (Yansu Private — no uplink, BYOK-only)'
+        required: false
+        default: 'standard'
+        type: choice
+        options:
+          - standard
+          - standalone
 
 env:
   APP_NAME: Yansu
@@ -155,12 +163,32 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.VERSION }}
       version_num: ${{ steps.resolve.outputs.VERSION_NUM }}
+      variant: ${{ steps.resolve.outputs.VARIANT }}
+      artifact_prefix: ${{ steps.resolve.outputs.ARTIFACT_PREFIX }}
     steps:
       - name: Resolve version
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Build variant: dispatched from Isoform/something's desktop-release.yml
+          # as client_payload.variant ("standalone" for a desktop-standalone/v*
+          # tag), or chosen via workflow_dispatch input. "standalone" routes the
+          # whole pipeline to the Yansu Private edition: build-wails.sh runs with
+          # --standalone, artifacts get the Yansu-Private- prefix, and the R2
+          # manifest is published under the isolated private/ path so a Private
+          # install never self-updates into a normal Yansu build.
+          VARIANT="${{ github.event.client_payload.variant || inputs.variant || 'standard' }}"
+          if [ "$VARIANT" = "standalone" ]; then
+            ARTIFACT_PREFIX="Yansu-Private"
+          else
+            VARIANT="standard"
+            ARTIFACT_PREFIX="Yansu"
+          fi
+          echo "VARIANT=${VARIANT}" >> "$GITHUB_OUTPUT"
+          echo "ARTIFACT_PREFIX=${ARTIFACT_PREFIX}" >> "$GITHUB_OUTPUT"
+          echo "Build variant: ${VARIANT} (artifact prefix: ${ARTIFACT_PREFIX})"
+
           # Helper: find latest release tag via semver sort.
           find_latest() {
             gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
@@ -297,6 +325,12 @@ jobs:
           # Isoform/something (PR #1806) so the two repos stay in sync.
           YANSU_DESKTOP_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
           YANSU_DESKTOP_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # Standalone (Yansu Private) pins the self-updater to the isolated
+          # private manifest. build-wails.sh only reads this inside --standalone
+          # mode, so it is harmless for standard builds. The PostHog vars above are
+          # likewise ignored by --standalone (build-wails.sh skips telemetry key
+          # injection in standalone mode).
+          YANSU_PRIVATE_MANIFEST_URL: ${{ secrets.R2_PUBLIC_URL }}/private/version.json
         run: |
           BUILD_ARGS=(
             --platform darwin/${{ matrix.arch }}
@@ -305,6 +339,9 @@ jobs:
           )
           if [ -n "${{ steps.env-ldflags.outputs.LDFLAGS }}" ]; then
             BUILD_ARGS+=(--ldflags "${{ steps.env-ldflags.outputs.LDFLAGS }}")
+          fi
+          if [ "${{ needs.resolve-version.outputs.variant }}" = "standalone" ]; then
+            BUILD_ARGS+=(--standalone)
           fi
           bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
@@ -316,20 +353,24 @@ jobs:
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         env:
           VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
+          ARTIFACT_PREFIX: ${{ needs.resolve-version.outputs.artifact_prefix }}
+          # Bundle dir name carries a space for Private ("Yansu Private.app"); the
+          # inner executable is always "Yansu" (build-wails.sh keeps EXE_BASENAME).
+          BUNDLE_NAME: ${{ needs.resolve-version.outputs.variant == 'standalone' && 'Yansu Private' || 'Yansu' }}
         run: |
-          BINARY="${{ env.APP_NAME }}.app/Contents/MacOS/${{ env.APP_NAME }}"
-          GZ="${{ env.APP_NAME }}-${VERSION_NUM}-darwin-${{ matrix.display_arch }}.gz"
+          BINARY="${BUNDLE_NAME}.app/Contents/MacOS/Yansu"
+          GZ="${ARTIFACT_PREFIX}-${VERSION_NUM}-darwin-${{ matrix.display_arch }}.gz"
           gzip -c "$BINARY" > "$GZ"
-          echo "GZ: $(du -sh $GZ | cut -f1)"
+          echo "GZ: $(du -sh "$GZ" | cut -f1)"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-darwin-${{ matrix.display_arch }}
+          name: ${{ needs.resolve-version.outputs.artifact_prefix }}-darwin-${{ matrix.display_arch }}
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.dmg
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.app.tar.gz
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ needs.resolve-version.outputs.artifact_prefix }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.dmg
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ needs.resolve-version.outputs.artifact_prefix }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.app.tar.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ needs.resolve-version.outputs.artifact_prefix }}-${{ needs.resolve-version.outputs.version_num }}-darwin-${{ matrix.display_arch }}.gz
 
   build-linux:
     name: Build Linux (${{ matrix.display_arch }})
@@ -409,6 +450,8 @@ jobs:
           # Isoform/something (PR #1806) so the two repos stay in sync.
           YANSU_DESKTOP_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
           YANSU_DESKTOP_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # See macOS build step: only read by --standalone, harmless otherwise.
+          YANSU_PRIVATE_MANIFEST_URL: ${{ secrets.R2_PUBLIC_URL }}/private/version.json
         run: |
           BUILD_ARGS=(
             --platform linux/${{ matrix.arch }}
@@ -417,14 +460,21 @@ jobs:
           if [ -n "${{ steps.env-ldflags.outputs.LDFLAGS }}" ]; then
             BUILD_ARGS+=(--ldflags "${{ steps.env-ldflags.outputs.LDFLAGS }}")
           fi
+          if [ "${{ needs.resolve-version.outputs.variant }}" = "standalone" ]; then
+            BUILD_ARGS+=(--standalone)
+          fi
           bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
       - name: Package — .tar.gz (full install + auto-update)
         working-directory: source/${{ env.SOURCE_PATH }}/build/bin
         env:
           VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
+          ARTIFACT_PREFIX: ${{ needs.resolve-version.outputs.artifact_prefix }}
         run: |
-          STEM="${{ env.APP_NAME }}-${VERSION_NUM}-linux-${{ matrix.display_arch }}"
+          # Archive name carries the variant prefix (Yansu / Yansu-Private); the
+          # packaged binary keeps its build name "${{ env.APP_NAME }}" (Linux has
+          # no bundle rename — that is macOS-only).
+          STEM="${ARTIFACT_PREFIX}-${VERSION_NUM}-linux-${{ matrix.display_arch }}"
           # Pre-flight: fail loudly if any required sibling is missing.
           # quick-chat-spotlight previously fell off the package list and
           # CI did not notice because tar silently skips missing files
@@ -468,9 +518,9 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-${{ matrix.display_arch }}
+          name: ${{ needs.resolve-version.outputs.artifact_prefix }}-linux-${{ matrix.display_arch }}
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-linux-${{ matrix.display_arch }}.tar.gz
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ needs.resolve-version.outputs.artifact_prefix }}-${{ needs.resolve-version.outputs.version_num }}-linux-${{ matrix.display_arch }}.tar.gz
 
   build-windows:
     name: Build Windows (x64)
@@ -547,6 +597,8 @@ jobs:
           # Isoform/something (PR #1806) so the two repos stay in sync.
           YANSU_DESKTOP_POSTHOG_KEY: ${{ secrets.POSTHOG_PROD_KEY }}
           YANSU_DESKTOP_POSTHOG_HOST: ${{ secrets.POSTHOG_PROD_HOST }}
+          # See macOS build step: only read by --standalone, harmless otherwise.
+          YANSU_PRIVATE_MANIFEST_URL: ${{ secrets.R2_PUBLIC_URL }}/private/version.json
         shell: bash
         run: |
           BUILD_ARGS=(
@@ -556,6 +608,9 @@ jobs:
           if [ -n "${{ steps.env-ldflags.outputs.LDFLAGS }}" ]; then
             BUILD_ARGS+=(--ldflags "${{ steps.env-ldflags.outputs.LDFLAGS }}")
           fi
+          if [ "${{ needs.resolve-version.outputs.variant }}" = "standalone" ]; then
+            BUILD_ARGS+=(--standalone)
+          fi
           bash scripts/build-wails.sh "${BUILD_ARGS[@]}"
 
       - name: Package — .zip (full install + auto-update)
@@ -563,8 +618,11 @@ jobs:
         shell: bash
         env:
           VERSION_NUM: ${{ needs.resolve-version.outputs.version_num }}
+          ARTIFACT_PREFIX: ${{ needs.resolve-version.outputs.artifact_prefix }}
         run: |
-          STEM="${{ env.APP_NAME }}-${VERSION_NUM}-windows-x64"
+          # Archive name carries the variant prefix; the packaged .exe keeps its
+          # build name "${{ env.APP_NAME }}.exe" (Windows has no bundle rename).
+          STEM="${ARTIFACT_PREFIX}-${VERSION_NUM}-windows-x64"
           # Pre-flight: fail loudly if any required sibling is missing. The
           # build script's bundle_sherpa_dlls_windows() soft-fails (return 0
           # with just a warning) when it can't find the sherpa-onnx-go module
@@ -603,9 +661,9 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-windows-x64
+          name: ${{ needs.resolve-version.outputs.artifact_prefix }}-windows-x64
           path: |
-            source/${{ env.SOURCE_PATH }}/build/bin/${{ env.APP_NAME }}-${{ needs.resolve-version.outputs.version_num }}-windows-x64.zip
+            source/${{ env.SOURCE_PATH }}/build/bin/${{ needs.resolve-version.outputs.artifact_prefix }}-${{ needs.resolve-version.outputs.version_num }}-windows-x64.zip
 
   release:
     name: Create Release
@@ -634,9 +692,20 @@ jobs:
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
-          if gh release view "$VERSION" --repo "$REPO" &>/dev/null; then
-            echo "Deleting existing release $VERSION..."
-            gh release delete "$VERSION" --repo "$REPO" --yes --cleanup-tag
+          # Standalone gets a distinct release tag + title so it can never collide
+          # with — or delete — a standard release of the same version number.
+          if [ "${{ needs.resolve-version.outputs.variant }}" = "standalone" ]; then
+            RELEASE_TAG="${VERSION}-private"
+            RELEASE_TITLE="Yansu Private ${VERSION}"
+          else
+            RELEASE_TAG="${VERSION}"
+            RELEASE_TITLE="Yansu Desktop ${VERSION}"
+          fi
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=$RELEASE_TITLE" >> "$GITHUB_ENV"
+          if gh release view "$RELEASE_TAG" --repo "$REPO" &>/dev/null; then
+            echo "Deleting existing release $RELEASE_TAG..."
+            gh release delete "$RELEASE_TAG" --repo "$REPO" --yes --cleanup-tag
           fi
 
       - name: Set release notes
@@ -667,11 +736,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_BODY: ${{ steps.notes.outputs.BODY }}
         run: |
-          VERSION="${{ needs.resolve-version.outputs.version }}"
           REPO="${{ github.repository }}"
-          gh release create "$VERSION" \
+          # RELEASE_TAG / RELEASE_TITLE were exported by the clean-up step above
+          # (standalone -> "<version>-private" / "Yansu Private <version>").
+          gh release create "$RELEASE_TAG" \
             --repo "$REPO" \
-            --title "Yansu Desktop $VERSION" \
+            --title "$RELEASE_TITLE" \
             --notes "$RELEASE_BODY" \
             release/*
 
@@ -700,18 +770,37 @@ jobs:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
           CHANGELOG_FROM_JOB: ${{ needs.generate-changelog.outputs.changelog }}
           MANUAL_NOTES_INPUT: ${{ github.event.client_payload.release_notes || inputs.release_notes }}
+          VARIANT: ${{ needs.resolve-version.outputs.variant }}
+          ARTIFACT_PREFIX: ${{ needs.resolve-version.outputs.artifact_prefix }}
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           VERSION_NUM="${{ needs.resolve-version.outputs.version_num }}"
-          BASE_URL="${R2_PUBLIC_URL}/releases/${VERSION}"
+
+          # Standalone (Yansu Private) publishes to an isolated tree so a Private
+          # install never resolves a normal-edition asset and vice-versa:
+          #   releases/private/<ver>/   (artifacts)   +   private/version.json (manifest)
+          # The build jobs inject StandaloneR2ManifestURL=<R2>/private/version.json
+          # to match. Standard keeps the original releases/<ver>/ + root version.json.
+          # RELEASE_DIR / MANIFEST_KEY are exported for the two upload steps below.
+          if [ "$VARIANT" = "standalone" ]; then
+            RELEASE_DIR="releases/private/${VERSION}"
+            MANIFEST_KEY="private/version.json"
+          else
+            RELEASE_DIR="releases/${VERSION}"
+            MANIFEST_KEY="version.json"
+          fi
+          echo "RELEASE_DIR=$RELEASE_DIR" >> "$GITHUB_ENV"
+          echo "MANIFEST_KEY=$MANIFEST_KEY" >> "$GITHUB_ENV"
+          BASE_URL="${R2_PUBLIC_URL}/${RELEASE_DIR}"
           if [ -n "$MANUAL_NOTES_INPUT" ] && [ "$MANUAL_NOTES_INPUT" != "Bug fixes and improvements." ]; then
             NOTES="$MANUAL_NOTES_INPUT"
           else
             NOTES="$CHANGELOG_FROM_JOB"
           fi
 
-          # All artifacts are versioned: Yansu-<version_num>-<platform>.<ext>
-          STEM="Yansu-${VERSION_NUM}"
+          # All artifacts are versioned: <prefix>-<version_num>-<platform>.<ext>
+          # (prefix = Yansu or Yansu-Private).
+          STEM="${ARTIFACT_PREFIX}-${VERSION_NUM}"
 
           # Compute SHA-256 checksums for auto-update assets.
           # Linux/Windows now use the same multi-file archive (.tar.gz /
@@ -786,13 +875,16 @@ jobs:
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
 
-          aws s3 cp r2-upload/ "s3://${R2_BUCKET}/releases/${VERSION}/" \
+          # RELEASE_DIR was exported by the manifest step:
+          #   standard   -> releases/<version>
+          #   standalone -> releases/private/<version>
+          aws s3 cp r2-upload/ "s3://${R2_BUCKET}/${RELEASE_DIR}/" \
             --recursive \
             --endpoint-url "${R2_ENDPOINT}" \
             --region auto \
             --exclude "version.json"
 
-          echo "Uploaded release ${VERSION} to R2"
+          echo "Uploaded release ${VERSION} to R2 (${RELEASE_DIR})"
 
       # Note: /latest/* paths are handled by the release-redirect Cloudflare
       # Worker, which reads version.json and 302-redirects to the versioned
@@ -805,9 +897,12 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          aws s3 cp r2-upload/version.json "s3://${R2_BUCKET}/version.json" \
+          # MANIFEST_KEY was exported by the manifest step:
+          #   standard   -> version.json          (normal updater channel)
+          #   standalone -> private/version.json  (Yansu Private channel)
+          aws s3 cp r2-upload/version.json "s3://${R2_BUCKET}/${MANIFEST_KEY}" \
             --endpoint-url "${R2_ENDPOINT}" \
             --region auto \
             --content-type "application/json"
 
-          echo "Updated version.json"
+          echo "Updated ${MANIFEST_KEY}"
