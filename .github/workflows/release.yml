@@ -739,10 +739,23 @@ jobs:
           REPO="${{ github.repository }}"
           # RELEASE_TAG / RELEASE_TITLE were exported by the clean-up step above
           # (standalone -> "<version>-private" / "Yansu Private <version>").
+          #
+          # Standalone must NEVER become the repo's "Latest" release. A standard
+          # client whose R2 check fails falls back to GitHub releases/latest and
+          # matches assets purely by platform suffix (e.g. -darwin-arm64.app.tar.gz),
+          # which a Yansu-Private-* asset also satisfies — so a Private "Latest"
+          # would let a standard install self-update into a Private build. Pin
+          # standalone to --latest=false --prerelease; standard keeps gh's default
+          # automatic latest selection.
+          LATEST_ARGS=()
+          if [ "${{ needs.resolve-version.outputs.variant }}" = "standalone" ]; then
+            LATEST_ARGS=(--latest=false --prerelease)
+          fi
           gh release create "$RELEASE_TAG" \
             --repo "$REPO" \
             --title "$RELEASE_TITLE" \
             --notes "$RELEASE_BODY" \
+            "${LATEST_ARGS[@]}" \
             release/*
 
   upload-to-r2:
