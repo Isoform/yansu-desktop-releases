@@ -67,12 +67,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          PREV_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
-            --json tagName -q '.[].tagName' 2>/dev/null \
-            | sort -V | tail -1 || true)
+          VARIANT="${{ github.event.client_payload.variant || inputs.variant || 'standard' }}"
+          if [ "$VARIANT" != "standalone" ]; then
+            VARIANT="standard"
+          fi
+
+          tags=$(gh release list --repo "${{ github.repository }}" --limit 1000 --exclude-drafts \
+            --json tagName -q '.[].tagName' 2>/dev/null || true)
+          if [ "$VARIANT" = "standalone" ]; then
+            PREV_TAG=$(printf '%s\n' "$tags" | { grep -E -- '-private$' || true; } | sort -V | tail -1)
+          else
+            PREV_TAG=$(printf '%s\n' "$tags" | { grep -E -v -- '-private$' || true; } | sort -V | tail -1)
+          fi
 
           if [ -n "$PREV_TAG" ]; then
-            echo "Previous release tag: $PREV_TAG"
+            echo "Previous ${VARIANT} release tag: $PREV_TAG"
             PREV_SHA=$(gh release view "$PREV_TAG" --repo "${{ github.repository }}" --json body -q '.body' 2>/dev/null \
               | grep -oP '<!-- source-commit: \K[0-9a-f]+(?= -->)' || true)
           fi
@@ -195,11 +204,23 @@ jobs:
           echo "ARTIFACT_PREFIX=${ARTIFACT_PREFIX}" >> "$GITHUB_OUTPUT"
           echo "Build variant: ${VARIANT} (artifact prefix: ${ARTIFACT_PREFIX})"
 
-          # Helper: find latest release tag via semver sort.
+          # Helper: find the latest release tag for a variant, so each edition
+          # auto-increments along its OWN version line. Private releases are
+          # tagged "<ver>-private"; standalone looks only at those, standard
+          # excludes them. Without this filter a standalone build would pick up
+          # the (much higher) standard version and jump onto its sequence.
+          # --limit 1000 keeps sparse Private tags from being pushed out of the
+          # query window by frequent standard releases. The "|| true" guards
+          # against grep's no-match exit tripping pipefail (e.g. first release).
           find_latest() {
-            gh release list --repo "${{ github.repository }}" --limit 100 --exclude-drafts \
-              --json tagName -q '.[].tagName' 2>/dev/null \
-              | sort -V | tail -1
+            local variant="$1" tags
+            tags=$(gh release list --repo "${{ github.repository }}" --limit 1000 --exclude-drafts \
+              --json tagName -q '.[].tagName' 2>/dev/null || true)
+            if [ "$variant" = "standalone" ]; then
+              printf '%s\n' "$tags" | { grep -E -- '-private$' || true; } | sort -V | tail -1
+            else
+              printf '%s\n' "$tags" | { grep -E -v -- '-private$' || true; } | sort -V | tail -1
+            fi
           }
 
           # Helper: bump a semver tag. Usage: bump_version v0.1.59 patch → v0.1.60
@@ -227,10 +248,10 @@ jobs:
             exit 0
           fi
 
-          # Auto-increment from latest release
-          LATEST=$(find_latest)
+          # Auto-increment from the latest release on this variant's own line.
+          LATEST=$(find_latest "$VARIANT")
           LATEST="${LATEST:-v0.0.0}"
-          echo "Latest release: $LATEST"
+          echo "Latest ${VARIANT} release: $LATEST"
 
           VERSION=$(bump_version "$LATEST" "${{ inputs.bump_type || 'patch' }}")
           echo "Auto-incremented version: $VERSION"
